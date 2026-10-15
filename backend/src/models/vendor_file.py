@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Any
 from sqlalchemy import BigInteger, CheckConstraint, ForeignKey, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from src.models.base import EMPTY_JSONB, Base, string_enum
+from src.models.base import EMPTY_JSONB, Base, enum_check, string_enum
 
 if TYPE_CHECKING:
     from src.models.document import Document
@@ -47,6 +47,7 @@ class VendorFile(Base):
             name="superseded_fields_together",
         ),
         CheckConstraint("superseded_by_id <> id", name="not_superseded_by_itself"),
+        enum_check("processing_status", ProcessingStatus),
     )
 
     component_id: Mapped[uuid.UUID] = mapped_column(
@@ -92,6 +93,7 @@ class Page(Base):
         UniqueConstraint("vendor_file_id", "page_number"),
         CheckConstraint("page_number >= 1", name="page_number_positive"),
         CheckConstraint("confidence BETWEEN 0 AND 1", name="confidence_range"),
+        enum_check("source_type", PageSourceType),
     )
 
     vendor_file_id: Mapped[uuid.UUID] = mapped_column(

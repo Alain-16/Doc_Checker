@@ -1,10 +1,9 @@
 import enum
-import re
 import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import ARRAY, DateTime, Enum, MetaData, Text, func, text
+from sqlalchemy import ARRAY, CheckConstraint, DateTime, Enum, MetaData, Text, func, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -55,14 +54,18 @@ class Base(DeclarativeBase):
 
 
 def string_enum(enum_class: type[enum.Enum]) -> Enum:
-    """Store a Python enum as a text column with a CHECK listing the allowed values.
+    """Column type that stores a Python enum as plain text.
+
+    Pair every use with enum_check() in the table's __table_args__, which adds the
+    CHECK listing the allowed values. We avoid Postgres's native ENUM type because
+    its values can't be removed or reordered later.
     """
     return Enum(
         enum_class,
-        # Names the CHECK constraint, e.g. ComplianceStatus -> "compliance_status".
-        name=_to_snake_case(enum_class.__name__),
         native_enum=False,
-        create_constraint=True,
+        # The CHECK comes from enum_check() instead. Letting this type create it
+        # makes Alembic write the constraint twice (SQLAlchemy 2.1 / Alembic 1.20).
+        create_constraint=False,
         length=ENUM_COLUMN_LENGTH,
         # Store the enum's value ("needs_review"), not its Python name ("NEEDS_REVIEW").
         values_callable=lambda members: [member.value for member in members],
@@ -70,6 +73,11 @@ def string_enum(enum_class: type[enum.Enum]) -> Enum:
     )
 
 
-def _to_snake_case(name: str) -> str:
-    # Put an underscore before every capital letter except the first, then lowercase.
-    return re.sub(r"(?<!^)(?=[A-Z])", "_", name).lower()
+def enum_check(column_name: str, enum_class: type[enum.Enum]) -> CheckConstraint:
+    """CHECK that a text column only holds one of the enum's values.
+
+    Named after the column, e.g. "ck_documents_compliance_status". A NULL value
+    passes, so nullable enum columns keep working.
+    """
+    allowed_values = ", ".join(f"'{member.value}'" for member in enum_class)
+    return CheckConstraint(f"{column_name} IN ({allowed_values})", name=column_name)

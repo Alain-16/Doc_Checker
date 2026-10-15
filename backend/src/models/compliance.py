@@ -6,7 +6,7 @@ from typing import Any
 from sqlalchemy import CheckConstraint, ForeignKey, Index, Text, false, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from src.models.base import EMPTY_JSONB, EMPTY_TEXT_ARRAY, Base, string_enum
+from src.models.base import EMPTY_JSONB, EMPTY_TEXT_ARRAY, Base, enum_check, string_enum
 from src.models.document import ComplianceStatus, Document, ResultMethod
 
 
@@ -55,6 +55,8 @@ class ComplianceAttribute(Base):
         CheckConstraint("page_number >= 1", name="page_number_positive"),
         CheckConstraint("confidence BETWEEN 0 AND 1", name="confidence_range"),
         CheckConstraint("mapping_confidence BETWEEN 0 AND 1", name="mapping_confidence_range"),
+        enum_check("status", AttributeStatus),
+        enum_check("extraction_method", ResultMethod),
     )
 
     document_id: Mapped[uuid.UUID] = mapped_column(
@@ -103,6 +105,8 @@ class ComplianceFinding(Base):
             postgresql_where=text("NOT resolved"),
         ),
         CheckConstraint("resolved = (resolved_at IS NOT NULL)", name="resolved_fields_together"),
+        enum_check("status", ComplianceStatus),
+        enum_check("severity", FindingSeverity),
     )
 
     document_id: Mapped[uuid.UUID] = mapped_column(

@@ -1,11 +1,12 @@
 import uuid
 from datetime import date, datetime
+from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import CheckConstraint, ForeignKey, Text, UniqueConstraint, false
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from .base import Base, EMPTY_JSONB,EMPTY_TEXT_ARRAY, string_enum
+from src.models.base import EMPTY_JSONB, EMPTY_TEXT_ARRAY, Base, enum_check, string_enum
 
 if TYPE_CHECKING:
     from src.models.compliance import ComplianceAttribute, ComplianceFinding
@@ -53,6 +54,7 @@ class DatePrecision(StrEnum):
 class DocumentType(Base):
 
     __tablename__ = "document_types"
+    __table_args__ = (enum_check("origin", DocumentTypeOrigin),)
 
     name: Mapped[str] = mapped_column(unique=True)
     display_name: Mapped[str]
@@ -69,8 +71,8 @@ class DocumentType(Base):
 
 class Document(Base):
 
-        __tablename__ = "documents"
-        __table_args__ = (
+    __tablename__ = "documents"
+    __table_args__ = (
         # Two documents in the same file can't start on the same page.
         # Also indexes vendor_file_id.
         UniqueConstraint("vendor_file_id", "start_page"),
@@ -82,59 +84,61 @@ class Document(Base):
             "classification_confidence BETWEEN 0 AND 1",
             name="classification_confidence_range",
         ),
+        enum_check("classification_method", ResultMethod),
+        enum_check("compliance_status", ComplianceStatus),
     )
 
-        vendor_file_id: Mapped[uuid.UUID] = mapped_column(
+    vendor_file_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("vendor_files.id", ondelete="RESTRICT")
     )
 
-        # --- Segmentation (Feature 3) ---
-        start_page: Mapped[int]
-        end_page: Mapped[int]
-        segmentation_confidence: Mapped[float]
-        # Why the boundary was placed here, e.g. {"signals": ["title", "page_counter_reset"]}.
-        segmentation_evidence: Mapped[dict[str, Any]] = mapped_column(
-            default=dict, server_default=EMPTY_JSONB
-        )
+    # --- Segmentation (Feature 3) ---
+    start_page: Mapped[int]
+    end_page: Mapped[int]
+    segmentation_confidence: Mapped[float]
+    # Why the boundary was placed here, e.g. {"signals": ["title", "page_counter_reset"]}.
+    segmentation_evidence: Mapped[dict[str, Any]] = mapped_column(
+        default=dict, server_default=EMPTY_JSONB
+    )
 
-        # --- Classification (Feature 4) ---
-        # Empty until classification runs, since segmentation creates the row first.
-        document_type_id: Mapped[uuid.UUID | None] = mapped_column(
-            ForeignKey("document_types.id", ondelete="RESTRICT"), index=True
-        )
-        classification_method: Mapped[ResultMethod | None] = mapped_column(string_enum(ResultMethod))
-        # Which GPT model classified it, when GPT was used, e.g. "gpt-5-mini".
-        classification_model: Mapped[str | None]
-        classification_confidence: Mapped[float | None]
+    # --- Classification (Feature 4) ---
+    # Empty until classification runs, since segmentation creates the row first.
+    document_type_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("document_types.id", ondelete="RESTRICT"), index=True
+    )
+    classification_method: Mapped[ResultMethod | None] = mapped_column(string_enum(ResultMethod))
+    # Which GPT model classified it, when GPT was used, e.g. "gpt-5-mini".
+    classification_model: Mapped[str | None]
+    classification_confidence: Mapped[float | None]
 
     # --- Identity read from the document ---
-        title: Mapped[str | None]
-        document_number: Mapped[str | None]
-        revision: Mapped[str | None]
+    title: Mapped[str | None]
+    document_number: Mapped[str | None]
+    revision: Mapped[str | None]
 
-        # --- Compliance status (Feature 7) ---
-        # Copied here from the latest finding because the dashboard reads it constantly.
-        governing_date: Mapped[date | None]
-        # Starts as needs_review: nothing looks "fine" until the rules engine has checked it.
-        compliance_status: Mapped[ComplianceStatus] = mapped_column(
-            string_enum(ComplianceStatus),
-            default=ComplianceStatus.NEEDS_REVIEW,
-            server_default=ComplianceStatus.NEEDS_REVIEW.value,
-            index=True,
-        )
-        status_reason: Mapped[str | None] = mapped_column(Text)
-        status_evaluated_at: Mapped[datetime | None]
+    # --- Compliance status (Feature 7) ---
+    # Copied here from the latest finding because the dashboard reads it constantly.
+    governing_date: Mapped[date | None]
+    # Starts as needs_review: nothing looks "fine" until the rules engine has checked it.
+    compliance_status: Mapped[ComplianceStatus] = mapped_column(
+        string_enum(ComplianceStatus),
+        default=ComplianceStatus.NEEDS_REVIEW,
+        server_default=ComplianceStatus.NEEDS_REVIEW.value,
+        index=True,
+    )
+    status_reason: Mapped[str | None] = mapped_column(Text)
+    status_evaluated_at: Mapped[datetime | None]
 
-        # Type-specific facts without their own column, e.g. {"storage_conditions": "..."}.
-        extracted_fields: Mapped[dict[str, Any]] = mapped_column(
-            default=dict, server_default=EMPTY_JSONB
-        )
+    # Type-specific facts without their own column, e.g. {"storage_conditions": "..."}.
+    extracted_fields: Mapped[dict[str, Any]] = mapped_column(
+        default=dict, server_default=EMPTY_JSONB
+    )
 
-        vendor_file: Mapped["VendorFile"] = relationship(back_populates="documents")
-        document_type: Mapped[DocumentType | None] = relationship(back_populates="documents")
-        dates: Mapped[list["DocumentDate"]] = relationship(back_populates="document")
-        attributes: Mapped[list["ComplianceAttribute"]] = relationship(back_populates="document")
-        findings: Mapped[list["ComplianceFinding"]] = relationship(back_populates="document")
+    vendor_file: Mapped["VendorFile"] = relationship(back_populates="documents")
+    document_type: Mapped[DocumentType | None] = relationship(back_populates="documents")
+    dates: Mapped[list["DocumentDate"]] = relationship(back_populates="document")
+    attributes: Mapped[list["ComplianceAttribute"]] = relationship(back_populates="document")
+    findings: Mapped[list["ComplianceFinding"]] = relationship(back_populates="document")
 
 
 class DocumentDate(Base):
@@ -144,6 +148,9 @@ class DocumentDate(Base):
     __table_args__ = (
         CheckConstraint("page_number >= 1", name="page_number_positive"),
         CheckConstraint("confidence BETWEEN 0 AND 1", name="confidence_range"),
+        enum_check("date_type", DateType),
+        enum_check("precision", DatePrecision),
+        enum_check("extraction_method", ResultMethod),
     )
 
     document_id: Mapped[uuid.UUID] = mapped_column(
