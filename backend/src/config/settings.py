@@ -39,6 +39,11 @@ class Settings(BaseSettings):
     s3_secret_access_key: SecretStr | None = None
     s3_originals_bucket: str
 
+    ocr_confidence_threshold: float = 0.80
+    textract_region: str | None = None
+
+    openai_api_key: SecretStr
+
 
 @lru_cache
 def get_settings() -> Settings:

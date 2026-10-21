@@ -37,8 +37,9 @@ class VendorFile(Base):
 
     __tablename__ = "vendor_files"
     __table_args__ = (
-        # Same file uploaded twice for the same component = duplicate (Feature 1).
-        UniqueConstraint("component_id", "file_hash"),
+        # The same bytes uploaded twice = duplicate (Feature 1). Checked across ALL
+        # files, because the component isn't known until the pipeline identifies it.
+        UniqueConstraint("file_hash"),
         CheckConstraint("file_size_bytes > 0", name="file_size_positive"),
         CheckConstraint("page_count >= 1", name="page_count_positive"),
         # Either the file is current (both empty) or superseded (both filled in).
@@ -50,8 +51,10 @@ class VendorFile(Base):
         enum_check("processing_status", ProcessingStatus),
     )
 
-    component_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("components.id", ondelete="RESTRICT")
+    # Empty from upload until the pipeline identifies the vendor and component
+    # (or a reviewer does, when identification was uncertain).
+    component_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("components.id", ondelete="RESTRICT"), index=True
     )
     filename: Mapped[str]
     # Where the original PDF is stored in S3/object storage. Never the PDF bytes.
@@ -79,7 +82,13 @@ class VendorFile(Base):
     )
     superseded_at: Mapped[datetime | None]
 
-    component: Mapped["Component"] = relationship(back_populates="vendor_files")
+    # How the vendor and component were identified: names as written, page,
+    # snippet, method, confidence. Kept so the link can be explained to an auditor.
+    identification_evidence: Mapped[dict[str, Any]] = mapped_column(
+        default=dict, server_default=EMPTY_JSONB
+    )
+
+    component: Mapped["Component | None"] = relationship(back_populates="vendor_files")
     pages: Mapped[list["Page"]] = relationship(back_populates="vendor_file")
     documents: Mapped[list["Document"]] = relationship(back_populates="vendor_file")
 
@@ -102,8 +111,7 @@ class Page(Base):
     page_number: Mapped[int]
     text: Mapped[str] = mapped_column(Text)
     source_type: Mapped[PageSourceType] = mapped_column(string_enum(PageSourceType))
-    # Which engine produced the text, e.g. "pymupdf", "paddleocr", "textract".
-    # Free text, because engines are swapped as benchmarks come in (Feature 13).
+
     extraction_engine: Mapped[str]
     confidence: Mapped[float]
     # Text blocks with positions, tables, image regions: whatever the engine returned.

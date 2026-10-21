@@ -12,14 +12,8 @@ from src.models import Component, Vendor
 
 router = APIRouter(tags=["vendors"])
 
-NON_ALPHANUMERIC = re.compile(r"[^a-z0-9]+")
-
 
 # --- Request and response shapes (Pydantic checks incoming JSON against these) ---
-
-
-class VendorCreate(BaseModel):
-    name: str = Field(min_length=1, max_length=200)
 
 
 class VendorOut(BaseModel):
@@ -29,13 +23,8 @@ class VendorOut(BaseModel):
 
     id: uuid.UUID
     name: str
+    aliases: list[str]
 
-
-class ComponentCreate(BaseModel):
-    name: str = Field(min_length=1, max_length=200)
-    vendor_part_number: str | None = None
-    internal_part_number: str | None = None
-    description: str | None = None
 
 
 class ComponentOut(BaseModel):
@@ -47,14 +36,19 @@ class ComponentOut(BaseModel):
     vendor_part_number: str | None
     internal_part_number: str | None
     description: str | None
+    aliases: list[str]
 
 
-def normalize_vendor_name(name: str) -> str:
-    """"West Pharmaceutical Services, Inc." -> "west pharmaceutical services inc".
+@router.get("/vendors", response_model=list[VendorOut])
+def list_vendors(session: Session = Depends(get_session)) -> list[Vendor]:
 
-    Two spellings of the same vendor collide on normalized_name's UNIQUE
-    constraint, so the same vendor can't be created twice by accident.
-    """
-    return NON_ALPHANUMERIC.sub(" ", name.casefold()).strip()
+    return list(session.scalars(select(Vendor).order_by(Vendor.name)))
+
+@router.get("/components", response_model=list[ComponentOut])
+def list_components(vendor_id: uuid.UUID | None = None, session: Session = Depends(get_session)) -> list[Component]:
+    query = select(Component).order_by(Component.name)
+    if vendor_id is not None:
+        query = query.where(Component.vendor_id == vendor_id)
+    return list(session.scalars(query))
 
 
