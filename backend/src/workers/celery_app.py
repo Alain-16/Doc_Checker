@@ -5,7 +5,7 @@ from src.config.settings import get_settings
 from src.config.database import engine
 
 # Task names are plain strings so the API can queue a job by name without
-# importing the pipeline (and with it PyMuPDF, OpenCV and PaddleOCR).
+# importing the pipeline (and with it PyMuPDF, OpenCV and Tesseract).
 PROCESS_VENDOR_FILE_TASK = "process_vendor_file"
 
 celery_app = Celery(

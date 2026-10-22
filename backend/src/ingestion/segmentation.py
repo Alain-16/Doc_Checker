@@ -54,7 +54,7 @@ class PageSignals:
     counter: tuple[int, int] | None  # (3, 7) for "Page 3 of 7"
     document_number: str | None
     revision: str | None
-    layout_kind: str  # "drawing", "scanned" or "text"
+    layout_kind: str  # "figure", "drawing", "scanned" or "text"
 
 
 @dataclass
@@ -103,6 +103,8 @@ def header_footer_text(blocks: list[dict[str, Any]], page_height: float) -> str:
 
 
 def layout_kind(page: Page) -> str:
+    if page.layout_data.get("figure", False):
+        return "figure"
     if page.layout_data.get("vector_paths", 0) >= DRAWING_MIN_VECTOR_PATHS:
         return "drawing"
     return "scanned" if page.source_type == "scanned" else "text"

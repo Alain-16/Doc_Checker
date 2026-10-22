@@ -39,8 +39,6 @@ class Settings(BaseSettings):
     s3_secret_access_key: SecretStr | None = None
     s3_originals_bucket: str
 
-    # Which self-hosted engine reads printed text (we're comparing engines).
-    ocr_engine: Literal["tesseract", "ocrmypdf"] = "tesseract"
     ocr_confidence_threshold: float = 0.80
     textract_region: str | None = None
 

@@ -1,7 +1,5 @@
-import tempfile
 from dataclasses import dataclass
 from functools import lru_cache
-from pathlib import Path
 from typing import Protocol
 
 import boto3
@@ -12,7 +10,7 @@ from src.config.settings import get_settings
 
 # --- Image cleanup settings ---
 # Scans are rarely tilted more than a few degrees; larger turns (90°) are fixed
-# by OCRmyPDF's page rotation (Tesseract orientation detection) instead.
+# by Tesseract's orientation detection instead.
 MAX_SKEW_DEGREES = 5.0
 SKEW_STEP_DEGREES = 0.25
 # Skew is estimated on a shrunken copy: much faster, and accurate enough.
@@ -106,108 +104,12 @@ def clean_scan(gray: np.ndarray) -> np.ndarray:
     )
 
 
-# Engine 1: OCRmyPDF (Tesseract), self-hosted, for printed text
+# Engine 1: Tesseract, self-hosted, for printed text
 
-# OCRmyPDF has to be told the image resolution to size the page correctly.
-# Our page images are rendered at 300 dpi (page_reading.RENDER_DPI).
-OCR_IMAGE_DPI = 300
-POINTS_PER_INCH = 72
 # Tesseract gives up on a single image after this long instead of hanging the worker.
 TESSERACT_TIMEOUT_SECONDS = 180
-# A token "looks like a word" when at least this share of its characters are
-# letters or digits. Misreads of handwriting or sideways text come out as
-# symbol soup ("~/;'l", "‘AID"), which fails this test.
-WORDLIKE_MIN_ALNUM_SHARE = 0.7
-
-
-def wordlike_share(text: str) -> float:
-    """Share of tokens in `text` that look like real words or numbers (0..1).
-
-    OCRmyPDF writes a text layer but doesn't report how sure Tesseract was, so
-    this stands in for a confidence score: clean print scores near 1, garbage
-    near 0. It drives the same decisions a real score would (Textract fallback,
-    review queue).
-    """
-    tokens = [token.strip(".,:;()[]\"'") for token in text.split()]
-    tokens = [token for token in tokens if token]
-    if not tokens:
-        return 0.0
-    wordlike = sum(
-        sum(char.isalnum() for char in token) / len(token) >= WORDLIKE_MIN_ALNUM_SHARE
-        for token in tokens
-    )
-    return wordlike / len(tokens)
-
-
-class OcrmypdfEngine:
-    name = "ocrmypdf"
-
-    def read(self, image: np.ndarray) -> OcrResult:
-        """OCR one image: wrap it in a PDF with OCRmyPDF, then read the words back.
-
-        OCRmyPDF works on files, so the image goes through a temporary folder.
-        The import is inside the function so processes that never OCR (like the
-        API) don't load it.
-        """
-        import ocrmypdf
-        import pymupdf
-
-        with tempfile.TemporaryDirectory() as temp_dir:
-            image_path = Path(temp_dir) / "image.png"
-            pdf_path = Path(temp_dir) / "ocr.pdf"
-            if not cv2.imwrite(str(image_path), image):
-                raise ValueError("Could not write page image for OCRmyPDF.")
-            ocrmypdf.ocr(
-                image_path,
-                pdf_path,
-                image_dpi=OCR_IMAGE_DPI,
-                language=["eng"],
-                # Turns pages scanned sideways or upside down upright (Tesseract OSD).
-                rotate_pages=True,
-                # We already deskewed in clean_scan.
-                deskew=False,
-                # Plain PDF: skips the slow PDF/A conversion; we only want the text.
-                output_type="pdf",
-                optimize=0,
-                tesseract_timeout=TESSERACT_TIMEOUT_SECONDS,
-                progress_bar=False,
-                # Celery worker processes may not start child processes of their
-                # own, so OCRmyPDF must use threads instead of a process pool.
-                use_threads=True,
-                jobs=1,
-            )
-            with pymupdf.open(pdf_path) as pdf:
-                # Each word: (x0, y0, x1, y1, text, block_no, line_no, word_no).
-                words = pdf[0].get_text("words")
-
-        # Group words into lines, as Tesseract laid them out.
-        grouped: dict[tuple[int, int], list[tuple]] = {}
-        for word in words:
-            grouped.setdefault((word[5], word[6]), []).append(word)
-
-        # Word boxes are in PDF points; OcrLine boxes are pixels of the image read.
-        scale = OCR_IMAGE_DPI / POINTS_PER_INCH
-        lines = []
-        for line_words in grouped.values():
-            text = " ".join(word[4] for word in line_words).strip()
-            if not text:
-                continue
-            bbox = (
-                min(word[0] for word in line_words) * scale,
-                min(word[1] for word in line_words) * scale,
-                max(word[2] for word in line_words) * scale,
-                max(word[3] for word in line_words) * scale,
-            )
-            lines.append(OcrLine(text=text, bbox=bbox, confidence=wordlike_share(text)))
-        # Reading order: top to bottom, then left to right. Rounding y to 10 px
-        # keeps words on the same printed line together despite tiny offsets.
-        lines.sort(key=lambda line: (round(line.bbox[1] / 10), line.bbox[0]))
-        return OcrResult(engine=self.name, lines=lines)
-
-# Engine 1 (alternative): Tesseract called directly
-
 # Tesseract's orientation check (OSD) reports how sure it is; below this we
-# leave the image as it is. 14 is OCRmyPDF's default, so the two engines agree.
+# leave the image as it is (14 is the cut-off OCRmyPDF uses).
 MIN_ORIENTATION_CONFIDENCE = 14.0
 # Tesseract scores words 0..100; -1 marks rows that are layout, not words.
 NOT_A_WORD = -1
@@ -240,8 +142,7 @@ class TesseractOcrEngine:
     def read(self, image: np.ndarray) -> OcrResult:
         """OCR one image and keep Tesseract's own per-word confidence.
 
-        Unlike OCRmyPDF, calling Tesseract directly returns a score for every
-        word, so the line confidence is real, not estimated.
+        Tesseract scores every word; a line's confidence is the average of its words.
         """
         import pytesseract
 
@@ -338,16 +239,8 @@ class TextractOcrEngine:
 # Choosing the engine for an image
 
 
-# One of each per worker process. They hold no state, so sharing them is safe.
-PRINTED_TEXT_ENGINES: dict[str, OcrEngine] = {
-    "tesseract": TesseractOcrEngine(),
-    "ocrmypdf": OcrmypdfEngine(),
-}
-
-
-def get_printed_text_engine() -> OcrEngine:
-    """The engine picked by the OCR_ENGINE setting."""
-    return PRINTED_TEXT_ENGINES[get_settings().ocr_engine]
+# One per worker process. It holds no state, so sharing it is safe.
+tesseract_engine = TesseractOcrEngine()
 
 
 @lru_cache
@@ -358,15 +251,15 @@ def get_textract_engine() -> TextractOcrEngine | None:
 
 
 def ocr_image(gray: np.ndarray) -> OcrResult:
-    """Clean a scan and read it: a free engine first, Textract when it struggles.
+    """Clean a scan and read it: Tesseract first, Textract when it struggles.
 
-    Tesseract and OCRmyPDF are free and good on print; on handwriting they
-    produce garbage, which scores low. So a low score is our handwriting
-    detector: we then ask Textract (paid, built for handwriting) and keep
-    whichever engine was more confident.
+    Tesseract is free and good on print; on handwriting it produces garbage,
+    which scores low. So a low score is our handwriting detector: we then ask
+    Textract (paid, built for handwriting) and keep whichever engine was more
+    confident.
     """
     cleaned = clean_scan(gray)
-    result = get_printed_text_engine().read(cleaned)
+    result = tesseract_engine.read(cleaned)
 
     textract = get_textract_engine()
     if textract is not None and result.confidence < get_settings().ocr_confidence_threshold:

@@ -29,6 +29,18 @@ MIN_IMAGE_REGION_HEIGHT_PT = 18  # a quarter inch, about one line of text
 # scanner; OCR-ing it again would duplicate its text.
 COVERED_REGION_MIN_WORDS = 3
 
+# --- Figures: charts and graphs scanned as images ---
+# OCR on a chart reads axis labels and sideways text as junk. Such a page is a
+# figure, not a reading problem, so it isn't sent to review. Measured on a real
+# bundle: charts had 52-78% junk lines and under 40 well-read characters; text
+# pages (signature pages included) had at most 28% junk and 290+ good characters.
+JUNK_LINE_BELOW_CONFIDENCE = 0.5
+FIGURE_MIN_JUNK_LINE_SHARE = 0.5
+FIGURE_MAX_GOOD_CHARS = 100
+# On a figure page, only lines read at least this well are kept (titles such as
+# "Attachment 3"); the junk would only mislead the later LLM stages.
+FIGURE_KEEP_LINE_CONFIDENCE = 0.8
+
 RENDER_DPI = 300  # OCR engines are trained on roughly 300 dpi scans
 POINTS_PER_INCH = 72
 
@@ -137,6 +149,22 @@ def ocr_blocks(result: OcrResult, origin: pymupdf.Point) -> list[dict[str, Any]]
     return blocks
 
 
+def is_figure(result: OcrResult) -> bool:
+    """True when the OCR looks like a chart: mostly junk lines, little real text."""
+    if not result.lines:
+        return False
+    junk_lines = sum(line.confidence < JUNK_LINE_BELOW_CONFIDENCE for line in result.lines)
+    good_chars = sum(
+        len(line.text) for line in result.lines if line.confidence >= FIGURE_KEEP_LINE_CONFIDENCE
+    )
+    return junk_lines / len(result.lines) >= FIGURE_MIN_JUNK_LINE_SHARE and good_chars < FIGURE_MAX_GOOD_CHARS
+
+
+def needs_review(reading: PageReading, threshold: float) -> bool:
+    """Low-confidence pages go to review, except figures (their text is expected junk)."""
+    return reading.confidence < threshold and not reading.layout.get("figure", False)
+
+
 def is_covered_by_text(page: pymupdf.Page, region: pymupdf.Rect) -> bool:
     """True when text-layer words already sit on top of this image region."""
     words = page.get_text("words", clip=region)
@@ -161,6 +189,11 @@ def read_page(page: pymupdf.Page) -> PageReading:
     # --- Scanned: OCR the whole page ---
     if source_type == PageSourceType.SCANNED:
         result = ocr_image(render_gray(page))
+        if is_figure(result):
+            kept = [line for line in result.lines if line.confidence >= FIGURE_KEEP_LINE_CONFIDENCE]
+            layout["figure"] = True
+            layout["dropped_lines"] = len(result.lines) - len(kept)
+            result = OcrResult(result.engine, kept)
         layout["blocks"] = ocr_blocks(result, page.rect.tl)
         return PageReading(result.text, source_type, result.engine, result.confidence, layout)
 
@@ -232,7 +265,7 @@ def read_pages(session: Session, vendor_file: VendorFile) -> None:
                 session.add(page)
                 session.flush()  # send the INSERT now so page.id exists for the review item
 
-                if reading.confidence < threshold:
+                if needs_review(reading, threshold):
                     session.add(
                         ReviewItem(
                             vendor_file_id=vendor_file.id,
