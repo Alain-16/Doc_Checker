@@ -1,3 +1,5 @@
+from enum import StrEnum
+
 from langchain_core.runnables import Runnable
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from pydantic import BaseModel

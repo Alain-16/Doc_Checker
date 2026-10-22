@@ -20,7 +20,7 @@ class DuplicateUpload(Exception):
         self.existing = existing
 
 
-def find_by_hash(session: Session, file_has:str) -> VendorFile | None:
+def find_by_hash(session: Session, file_hash:str) -> VendorFile | None:
     return session.scalar(select(VendorFile).where(VendorFile.file_hash == file_hash))
 
 def register_upload(session: Session, source: BinaryIO, filename: str) -> VendorFile:

@@ -52,6 +52,8 @@ def get_vendor_file_or_404(session: Session, vendor_file_id: uuid.UUID) -> Vendo
 def upload_vendor_file(
     file: UploadFile = File(), session: Session = Depends(get_session)
 ) -> UploadAccepted:
+    
+    """ Accept a PDF and start processing it in the background."""
 
     try:
         vendor_file = register_upload(session, file.file, file.filename or "upload.pdf")

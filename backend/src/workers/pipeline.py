@@ -73,11 +73,15 @@ def run_pipeline(session: Session, vendor_file: VendorFile) -> None:
         except Exception as error:
             session.rollback()
             record_stage(vendor_file, stage_name, STAGE_FAILED, error=f"{stage_name}: {error}")
+            vendor_file.processing_status = ProcessingStatus.FAILED
             session.commit()
             raise
 
         record_stage(vendor_file,stage_name, STAGE_COMPLETED)
         session.commit()
+
+    vendor_file.processing_status = ProcessingStatus.COMPLETED
+    session.commit()
 
 @celery_app.task(name=PROCESS_VENDOR_FILE_TASK)
 def process_vendor_file(vendor_file_id: str) -> None:

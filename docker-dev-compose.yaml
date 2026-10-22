@@ -31,7 +31,7 @@ services:
 
   object-storage:
     image: chrislusf/seaweedfs:4.48
-    command: server -dir=/data -s3 -s3.port=8333
+    command: server -dir=/data -s3 -s3.port=8333 -master.volumeSizeLimitMB=128 -volume.max=50
     ports:
       - "127.0.0.1:${S3_PORT:-8333}:8333"
     volumes:
