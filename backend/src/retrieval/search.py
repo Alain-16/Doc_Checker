@@ -127,12 +127,21 @@ def reciprocal_rank_fusion(rankings: list[list[uuid.UUID]]) -> dict[uuid.UUID, f
 
 
 def hybrid_search(
-    session: Session, text: str, filters: SearchFilters | None = None, limit: int = 10
+    session: Session,
+    text: str,
+    filters: SearchFilters | None = None,
+    limit: int = 10,
+    vector: list[float] | None = None,
 ) -> list[SearchHit]:
-    """The best `limit` chunks for a question, by keyword and meaning together."""
+    """The best `limit` chunks for a question, by keyword and meaning together.
+
+    `vector` is the text's embedding when the caller already has it: a search
+    repeated over many documents then embeds the text once, not once per search.
+    """
     filters = filters or SearchFilters()
+    vector = vector if vector is not None else embedding_model().embed_query(text)
     keyword_ids = keyword_search(session, text, filters, CANDIDATES_PER_METHOD)
-    vector_ids = vector_search(session, embedding_model().embed_query(text), filters, CANDIDATES_PER_METHOD)
+    vector_ids = vector_search(session, vector, filters, CANDIDATES_PER_METHOD)
 
     scores = reciprocal_rank_fusion([keyword_ids, vector_ids])
     best = sorted(scores, key=scores.__getitem__, reverse=True)[:limit]

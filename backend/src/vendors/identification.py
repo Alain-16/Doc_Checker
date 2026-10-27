@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from src.extraction.attributes import squash
+from src.extraction.key_attributes import squash
 from src.llm.models import MODEL_BY_TASK, LlmTask, structured_llm
 from src.models import Component, Document, Page, ReviewItem, Vendor, VendorFile
 from src.models.review import ReviewItemKind

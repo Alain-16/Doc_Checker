@@ -13,8 +13,8 @@ class ReviewItemKind(StrEnum):
     SEGMENT_BOUNDARY = "segment_boundary"
     DOCUMENT_TYPE = "document_type"  # low-confidence type or uncertain new type name
     DATE = "date"  # low confidence, ambiguous, or conflicting
-    ATTRIBUTE_VALUE = "attribute_value"
-    ATTRIBUTE_MAPPING = "attribute_mapping"  # "is 'Latex-free' the same as 'NRL'?"
+    ATTRIBUTE_VALUE = "attribute_value"  # low-confidence key attribute value
+    VENDOR_IDENTIFICATION = "vendor_identification"  # uncertain vendor or component
     COMPLIANCE_STATUS = "compliance_status"
 
 

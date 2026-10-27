@@ -16,20 +16,17 @@ class LlmTask(StrEnum):
     CLASSIFY_DOCUMENT = "classify_document"
     IDENTIFY_VENDOR = "identify_vendor"
     LABEL_DATES = "label_dates"
-    DISCOVER_ATTRIBUTES = "discover_attributes"
-    CONFIRM_ATTRIBUTE_MATCH = "confirm_attribute_match"
+    EXTRACT_KEY_ATTRIBUTES = "extract_key_attributes"
 
 
 # Which model each task uses. The PRD leaves the final choice to the Feature 13
 # benchmarks ("cheapest passing tier per task"); these are starting points.
-# Attribute discovery reads whole documents and must not miss claims, so it
-# gets the larger model; the others are short, narrow decisions.
+# All are narrow tasks on a few pages of text, so they start on the small tier.
 MODEL_BY_TASK: dict[LlmTask, str] = {
-    LlmTask.CLASSIFY_DOCUMENT: "gpt-5-mini",
-    LlmTask.IDENTIFY_VENDOR: "gpt-5-mini",
-    LlmTask.LABEL_DATES: "gpt-5-mini",
-    LlmTask.DISCOVER_ATTRIBUTES: "gpt-5",
-    LlmTask.CONFIRM_ATTRIBUTE_MATCH: "gpt-5-mini",
+    LlmTask.CLASSIFY_DOCUMENT: "gpt-5",
+    LlmTask.IDENTIFY_VENDOR: "gpt-5",
+    LlmTask.LABEL_DATES: "gpt-5",
+    LlmTask.EXTRACT_KEY_ATTRIBUTES: "gpt-5",
 }
 
 

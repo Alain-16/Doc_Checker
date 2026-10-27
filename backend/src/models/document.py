@@ -9,7 +9,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from src.models.base import EMPTY_JSONB, EMPTY_TEXT_ARRAY, Base, enum_check, string_enum
 
 if TYPE_CHECKING:
-    from src.models.compliance import ComplianceAttribute, ComplianceFinding
+    from src.models.compliance import ComplianceFinding, DocumentAttribute
     from src.models.vendor_file import VendorFile
 
 
@@ -137,7 +137,7 @@ class Document(Base):
     vendor_file: Mapped["VendorFile"] = relationship(back_populates="documents")
     document_type: Mapped[DocumentType | None] = relationship(back_populates="documents")
     dates: Mapped[list["DocumentDate"]] = relationship(back_populates="document")
-    attributes: Mapped[list["ComplianceAttribute"]] = relationship(back_populates="document")
+    attributes: Mapped[list["DocumentAttribute"]] = relationship(back_populates="document")
     findings: Mapped[list["ComplianceFinding"]] = relationship(back_populates="document")
 
 

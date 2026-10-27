@@ -7,9 +7,8 @@ from sqlalchemy.orm import Session
 
 from src.classification.classifier import classify_documents
 from src.config.database import SessionLocal
-from src.extraction.attributes import extract_attributes
 from src.extraction.dates import extract_dates
-from src.extraction.missing_attributes import detect_not_stated
+from src.extraction.key_attributes import extract_key_attributes
 from src.ingestion.page_reading import read_pages
 from src.ingestion.segmentation import segment_pages
 from src.ingestion.superseding import supersede_older_files
@@ -33,12 +32,11 @@ STAGES: list[tuple[str, StageFunction]] = [
     ("classify", classify_documents),
     ("identify_vendor", identify_vendor),
     ("supersede", supersede_older_files),
-    # Before extraction: the reworked attribute extraction (F6) will search this index.
+    # Before extraction: priority key attributes are found by searching this index.
     ("chunk", chunk_documents),
     ("embed", embed_chunks),
     ("extract_dates", extract_dates),
-    ("extract_attributes", extract_attributes),
-    ("detect_not_stated", detect_not_stated),
+    ("extract_key_attributes", extract_key_attributes),
 ]
 
 STAGE_RUNNING = "running"

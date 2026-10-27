@@ -3,19 +3,38 @@ from datetime import date, datetime
 from enum import StrEnum
 from typing import Any
 
-from sqlalchemy import CheckConstraint, ForeignKey, Index, Text, false, text
+from sqlalchemy import CheckConstraint, ForeignKey, Index, Text, UniqueConstraint, false, text, true
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.models.base import EMPTY_JSONB, EMPTY_TEXT_ARRAY, Base, enum_check, string_enum
 from src.models.document import ComplianceStatus, Document, ResultMethod
 
 
-class AttributeStatus(StrEnum):
+class AttributeGroup(StrEnum):
+    """Why an attribute is extracted, which decides where in the document it is looked for."""
+
+    # Document control data, for every document: read from its control pages
+    # (first pages + last page), where title blocks, revisions and signatures are.
+    CORE = "core"
+    # Critical fields of one document type (a certificate's lots): control pages too.
+    TYPE_SPECIFIC = "type_specific"
+    # Chosen by QA, e.g. latex status: can be anywhere, so found by index search.
+    PRIORITY = "priority"
+
+
+class AttributeValueType(StrEnum):
+    TEXT = "text"
+    TEXT_LIST = "text_list"  # e.g. every item number the document covers
+    DATE = "date"  # stored as "YYYY-MM-DD"
+    STATUS = "status"  # one of StatusValue
+    RECORDS = "records"  # rows of named fields, e.g. lot number + manufacturing date
+
+
+class StatusValue(StrEnum):
     YES = "yes"
     NO = "no"
-    CONDITIONAL = "conditional"
-    # The document doesn't address it at all. Different from "no", and itself a finding.
-    NOT_STATED = "not_stated"
+    CONDITIONAL = "conditional"  # true only under conditions the document states
 
 
 class FindingSeverity(StrEnum):
@@ -24,65 +43,87 @@ class FindingSeverity(StrEnum):
     CRITICAL = "critical"
 
 
-class CanonicalAttribute(Base):
-    """The growing catalog of normalized compliance attributes (Feature 6)."""
+class KeyAttribute(Base):
+    """One attribute the system extracts: the configured list QA maintains (Feature 6).
 
-    __tablename__ = "canonical_attributes"
+    Only what QA checks on every document is extracted; everything else stays
+    in the document and is answered by search (the compliance assistant).
+    Seeded by migration for now; QA edits it once users and signatures exist (F14).
+    """
 
-    # Stable key, e.g. "natural_rubber_latex".
-    name: Mapped[str] = mapped_column(unique=True)
-    display_name: Mapped[str]
-    description: Mapped[str | None] = mapped_column(Text)
-    # Wordings already mapped to this attribute, e.g. ["Latex-free", "NRL"].
-    aliases: Mapped[list[str]] = mapped_column(default=list, server_default=EMPTY_TEXT_ARRAY)
-
-    attributes: Mapped[list["ComplianceAttribute"]] = relationship(
-        back_populates="canonical_attribute"
+    __tablename__ = "key_attributes"
+    __table_args__ = (
+        # Core applies to every type, type-specific to exactly one; priority to either.
+        CheckConstraint(
+            "attribute_group = 'priority' OR (attribute_group = 'core') = (document_type_id IS NULL)",
+            name="group_matches_document_type",
+        ),
+        # A priority attribute is found by searching the index, so it needs a query.
+        CheckConstraint(
+            "attribute_group <> 'priority' OR search_query IS NOT NULL", name="priority_has_search_query"
+        ),
+        CheckConstraint(
+            "(value_type = 'records') = (cardinality(record_fields) > 0)", name="records_have_fields"
+        ),
+        enum_check("attribute_group", AttributeGroup),
+        enum_check("value_type", AttributeValueType),
     )
 
+    # Stable key, also the field name GPT fills in, e.g. "revision".
+    name: Mapped[str] = mapped_column(unique=True)
+    display_name: Mapped[str]
+    # Tells GPT exactly what to look for: this is the extraction instruction.
+    description: Mapped[str] = mapped_column(Text)
+    attribute_group: Mapped[AttributeGroup] = mapped_column(string_enum(AttributeGroup))
+    value_type: Mapped[AttributeValueType] = mapped_column(string_enum(AttributeValueType))
+    # Empty = every document type.
+    document_type_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("document_types.id", ondelete="RESTRICT"), index=True
+    )
+    # For records only: the fields of one row, e.g. ["lot_number", "manufacturing_date"].
+    record_fields: Mapped[list[str]] = mapped_column(default=list, server_default=EMPTY_TEXT_ARRAY)
+    # For priority attributes: what to search the document's chunks for.
+    search_query: Mapped[str | None]
+    # Required = a document that doesn't state it gets a "not stated" row, itself a finding.
+    required: Mapped[bool] = mapped_column(default=False, server_default=false())
+    active: Mapped[bool] = mapped_column(default=True, server_default=true())
 
-class ComplianceAttribute(Base):
-    """One compliance claim a document makes, e.g. "Natural rubber latex: not present"."""
+    values: Mapped[list["DocumentAttribute"]] = relationship(back_populates="key_attribute")
 
-    __tablename__ = "compliance_attributes"
+
+class DocumentAttribute(Base):
+    """The value of one key attribute in one document, with its evidence."""
+
+    __tablename__ = "document_attributes"
     __table_args__ = (
-        # Every stated value must point to its evidence. Only "not stated" may
-        # lack a page and snippet, because there is nothing on the page to cite.
+        UniqueConstraint("document_id", "key_attribute_id"),
+        # Every stated value must point to its evidence. Only "not stated"
+        # (value IS NULL) may lack a page and snippet: there's nothing to cite.
         CheckConstraint(
-            "status = 'not_stated' OR (page_number IS NOT NULL AND evidence_snippet IS NOT NULL)",
+            "value IS NULL OR (page_number IS NOT NULL AND evidence_snippet IS NOT NULL)",
             name="stated_value_has_evidence",
         ),
         CheckConstraint("page_number >= 1", name="page_number_positive"),
         CheckConstraint("confidence BETWEEN 0 AND 1", name="confidence_range"),
-        CheckConstraint("mapping_confidence BETWEEN 0 AND 1", name="mapping_confidence_range"),
-        enum_check("status", AttributeStatus),
         enum_check("extraction_method", ResultMethod),
     )
 
-    document_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("documents.id", ondelete="RESTRICT"), index=True
+    document_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("documents.id", ondelete="RESTRICT"))
+    key_attribute_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("key_attributes.id", ondelete="RESTRICT"), index=True
     )
-    # Empty while an uncertain mapping waits in the review queue.
-    canonical_attribute_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("canonical_attributes.id", ondelete="RESTRICT"), index=True
-    )
-    # The attribute name exactly as the document wrote it, e.g. "Latex-free".
-    name_as_written: Mapped[str]
-    # The full statement from the document. Empty for "not stated".
-    statement: Mapped[str | None] = mapped_column(Text)
-    status: Mapped[AttributeStatus] = mapped_column(string_enum(AttributeStatus))
+    # Shape depends on the attribute's value_type: "11", ["4432/50 Grey"], "2009-11-23",
+    # "yes", or [{"lot_number": "...", "manufacturing_date": "..."}].
+    # NULL = not stated. none_as_null stores Python None as SQL NULL, not JSON null.
+    value: Mapped[Any] = mapped_column(JSONB(none_as_null=True), nullable=True)
 
     page_number: Mapped[int | None]
     evidence_snippet: Mapped[str | None] = mapped_column(Text)
     extraction_method: Mapped[ResultMethod] = mapped_column(string_enum(ResultMethod))
     confidence: Mapped[float]
-    # How sure we are that name_as_written belongs to the canonical attribute.
-    mapping_confidence: Mapped[float | None]
 
     document: Mapped[Document] = relationship(back_populates="attributes")
-    canonical_attribute: Mapped[CanonicalAttribute | None] = relationship(
-        back_populates="attributes"
-    )
+    key_attribute: Mapped[KeyAttribute] = relationship(back_populates="values")
 
 
 class ComplianceFinding(Base):

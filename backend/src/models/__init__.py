@@ -1,5 +1,5 @@
 from src.models.base import Base
-from src.models.compliance import CanonicalAttribute, ComplianceAttribute, ComplianceFinding
+from src.models.compliance import ComplianceFinding, DocumentAttribute, KeyAttribute
 from src.models.document import Document, DocumentDate, DocumentType
 from src.models.vendor import Component, Vendor
 from src.models.vendor_file import Page, VendorFile
@@ -11,15 +11,15 @@ from .audit import AuditEvent, ElectronicSignature
 __all__ = [
     "AuditEvent",
     "Base",
-    "CanonicalAttribute",
     "Chunk",
-    "ComplianceAttribute",
     "ComplianceFinding",
     "Component",
     "Document",
+    "DocumentAttribute",
     "DocumentDate",
     "DocumentType",
     "ElectronicSignature",
+    "KeyAttribute",
     "Page",
     "ReviewItem",
     "User",
