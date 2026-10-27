@@ -9,8 +9,16 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from src.config.settings import get_settings
-from src.ingestion.ocr import OcrResult, ocr_image
+from src.ingestion.ocr import OcrResult, clean_scan, ocr_image
 from src.ingestion.storage import download_original
+from src.ingestion.tables import (
+    erase_lines,
+    find_digital_tables,
+    find_grid_cells,
+    find_scanned_tables,
+    grid_lines,
+    outside_tables,
+)
 from src.models import Page, ReviewItem, VendorFile
 from src.models.review import ReviewItemKind
 from src.models.vendor_file import PageSourceType
@@ -188,16 +196,28 @@ def read_page(page: pymupdf.Page) -> PageReading:
 
     # --- Scanned: OCR the whole page ---
     if source_type == PageSourceType.SCANNED:
-        result = ocr_image(render_gray(page))
+        cleaned = clean_scan(render_gray(page))
+        # Ruled lines are found first, then erased so OCR doesn't read them as "|".
+        rules = grid_lines(cleaned)
+        grids = find_grid_cells(rules)
+        result = ocr_image(erase_lines(cleaned, rules))
+        tables = []
         if is_figure(result):
             kept = [line for line in result.lines if line.confidence >= FIGURE_KEEP_LINE_CONFIDENCE]
             layout["figure"] = True
             layout["dropped_lines"] = len(result.lines) - len(kept)
             result = OcrResult(result.engine, kept)
-        layout["blocks"] = ocr_blocks(result, page.rect.tl)
+        else:
+            # Not on figures: chart axes and gridlines look like table rules.
+            tables = find_scanned_tables(grids, result, pixels_per_point=RENDER_DPI / POINTS_PER_INCH)
+        layout["tables"] = tables
+        layout["blocks"] = outside_tables(ocr_blocks(result, page.rect.tl), tables)
         return PageReading(result.text, source_type, result.engine, result.confidence, layout)
 
-    blocks = native_blocks(page)
+    # Ruled tables in the text layer, for digital and mixed pages alike.
+    tables = find_digital_tables(page)
+    layout["tables"] = tables
+    blocks = outside_tables(native_blocks(page), tables)
 
     # --- Digital: the text layer is all we need ---
     if source_type == PageSourceType.DIGITAL:
@@ -209,7 +229,7 @@ def read_page(page: pymupdf.Page) -> PageReading:
     for region in regions:
         if is_covered_by_text(page, region):
             continue
-        result = ocr_image(render_gray(page, clip=region))
+        result = ocr_image(clean_scan(render_gray(page, clip=region)))
         if not result.lines:
             continue  # a logo or photo with no text: nothing to add
         blocks.extend(ocr_blocks(result, region.tl))

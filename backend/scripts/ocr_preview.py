@@ -4,6 +4,7 @@ Nothing is saved: no database rows, no upload to object storage.
 
     uv run python scripts/ocr_preview.py path/to/file.pdf
     uv run python scripts/ocr_preview.py path/to/file.pdf --pages 1-5 --text
+    uv run python scripts/ocr_preview.py path/to/file.pdf --pages 27-30 --tables
 """
 
 import argparse
@@ -34,6 +35,7 @@ def main() -> None:
     parser.add_argument("pdf", type=Path)
     parser.add_argument("--pages", help="one page or a range, e.g. 7 or 1-5 (default: all)")
     parser.add_argument("--text", action="store_true", help="print each page's full text")
+    parser.add_argument("--tables", action="store_true", help="print each page's tables")
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -59,6 +61,11 @@ def main() -> None:
             )
             if args.text:
                 print(reading.text.strip() + "\n" + "-" * 80)
+            if args.tables:
+                for table in reading.layout.get("tables", []):
+                    print(f"  table {len(table['rows'])}x{len(table['rows'][0])}, header_rows={table['header_rows']}")
+                    for row in table["rows"]:
+                        print("    | " + " | ".join(cell[:20] for cell in row))
 
     print(f"total {time.perf_counter() - started:.0f}s")
     print(f"figures: {figures or 'none'}")

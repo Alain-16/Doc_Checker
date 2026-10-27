@@ -5,6 +5,8 @@ from typing import Literal
 from pydantic import HttpUrl, PostgresDsn, RedisDsn, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from src.models.chunk import ChunkingStrategy
+
 
 ENV_FILE = Path(__file__).resolve().parents[3] / ".env"
 
@@ -43,6 +45,13 @@ class Settings(BaseSettings):
     textract_region: str | None = None
 
     openai_api_key: SecretStr
+
+    # --- Chunking (Feature 10) ---
+    # Changing these needs a re-index (scripts/reindex.py); no OCR is re-run.
+    chunking_strategy: ChunkingStrategy = ChunkingStrategy.HYBRID
+    chunk_max_tokens: int = 512
+    # Share of each chunk repeated at the start of the next (PRD: 0, 10 or 20%).
+    chunk_overlap_percent: int = 10
 
 
 @lru_cache

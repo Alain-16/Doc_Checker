@@ -5,6 +5,7 @@ from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from pydantic import BaseModel
 
 from src.config.settings import get_settings
+from src.models.chunk import EMBEDDING_DIMENSIONS
 
 REQUEST_TIMEOUT_SECONDS = 120
 MAX_RETRIES = 3
@@ -51,6 +52,10 @@ def structured_llm(task: LlmTask, schema: type[BaseModel]) -> Runnable:
 def embedding_model() -> OpenAIEmbeddings:
     return OpenAIEmbeddings(
         model=EMBEDDING_MODEL,
+        # Ask OpenAI for the shortened vector the chunks column stores (1536,
+        # not the model's full 3072). text-embedding-3 models are trained so a
+        # shortened vector keeps most of the quality.
+        dimensions=EMBEDDING_DIMENSIONS,
         api_key=get_settings().openai_api_key,
         max_retries=MAX_RETRIES,
     )

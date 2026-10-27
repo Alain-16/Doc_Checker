@@ -14,6 +14,7 @@ from src.ingestion.page_reading import read_pages
 from src.ingestion.segmentation import segment_pages
 from src.ingestion.superseding import supersede_older_files
 from src.models import VendorFile
+from src.retrieval.indexing import chunk_documents, embed_chunks
 from src.vendors.identification import identify_vendor
 from src.models.vendor_file import ProcessingStatus
 from src.workers.celery_app import PROCESS_VENDOR_FILE_TASK, celery_app
@@ -32,6 +33,9 @@ STAGES: list[tuple[str, StageFunction]] = [
     ("classify", classify_documents),
     ("identify_vendor", identify_vendor),
     ("supersede", supersede_older_files),
+    # Before extraction: the reworked attribute extraction (F6) will search this index.
+    ("chunk", chunk_documents),
+    ("embed", embed_chunks),
     ("extract_dates", extract_dates),
     ("extract_attributes", extract_attributes),
     ("detect_not_stated", detect_not_stated),

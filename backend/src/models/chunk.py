@@ -1,4 +1,5 @@
 import uuid
+from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
 from pgvector.sqlalchemy import Vector
@@ -15,6 +16,16 @@ if TYPE_CHECKING:
 # vectors of up to 2000 dimensions, so the full 3072 couldn't be indexed.
 EMBEDDING_DIMENSIONS = 1536
 SEARCH_TEXT_CONFIG = "simple"
+
+
+class ChunkingStrategy(StrEnum):
+    """The four ways a document can be cut into chunks (PRD Feature 10)."""
+
+    FIXED = "fixed"
+    FIXED_OVERLAP = "fixed_overlap"
+    STRUCTURE = "structure"
+    HYBRID = "hybrid"
+
 
 class Chunk(Base):
         __tablename__ = "chunks"
