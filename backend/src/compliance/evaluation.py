@@ -10,6 +10,8 @@ from datetime import UTC, date, datetime
 from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session, selectinload
 
+from src.review.raising import refresh_alerts
+
 from src.compliance.rule_kinds import (
     RULE_KINDS,
     AttributeFact,
@@ -39,6 +41,8 @@ from src.models.document import ComplianceStatus
 from src.models.review import ReviewStatus
 from src.models.vendor_file import ProcessingStatus
 
+# Shown on a document whose file a newer upload replaced (it is no longer judged).
+SUPERSEDED_REASON = "Replaced by a newer file for this component; no longer evaluated."
 # The worst finding decides a document's status.
 STATUS_SEVERITY = {
     ComplianceStatus.CURRENT: 0,
@@ -195,6 +199,7 @@ def record_outcomes(
                 rule_code=active.rule.code,
                 rule_version_id=active.version.id,
                 status=outcome.status,
+                previous_status = finding.status if finding else None,
                 severity=active.version.severity,
                 message=outcome.message,
                 evidence=outcome.evidence,
@@ -210,6 +215,15 @@ def record_outcomes(
 
 
 def evaluate_document(session: Session, document: Document, rules: list[ActiveRule], today: date, now: datetime) -> None:
+    if document.vendor_file.superseded_by_id is not None:
+        # A newer file replaced this one: its problems are no longer anyone's to
+        # fix. Resolving its open findings closes their alerts; the resolved
+        # findings stay as history ("this bulletin was stale before it was replaced").
+        record_outcomes(session, {"document_id": document.id}, [], now)
+        document.status_reason = SUPERSEDED_REASON
+        document.status_evaluated_at = now
+        return
+
     facts = document_facts(session, document)
     results = [(active, active.spec.check(facts, active.parameters, today)) for active in rules_for_document(rules, document)]
     record_outcomes(session, {"document_id": document.id}, results, now)
@@ -248,12 +262,33 @@ def evaluate(session: Session, documents: list[Document], components: list[Compo
     for component in components:
         evaluate_component(session, component, rules, today, now)
 
+    session.flush()
+    refresh_alerts(session, now)
+
 
 def evaluate_compliance(session: Session, vendor_file: VendorFile) -> None:
-    """Pipeline stage: judge the file's documents, then its component."""
-    documents = session.scalars(select(Document).where(Document.vendor_file_id == vendor_file.id)).all()
-    components = [session.get(Component, vendor_file.component_id)] if vendor_file.component_id else []
-    evaluate(session, list(documents), components)
+    """Pipeline stage: judge the component's documents (all its files), then the component.
+
+    All files, not just this one: if this upload superseded an older file, the
+    older file's findings must resolve now, in the same run, not stay open.
+    """
+    if vendor_file.component_id is None:
+        # Component still waiting for review: only this file can be judged.
+        documents = session.scalars(select(Document).where(Document.vendor_file_id == vendor_file.id)).all()
+        evaluate(session, list(documents), [])
+        return
+
+    documents = session.scalars(
+        select(Document)
+        .join(VendorFile, Document.vendor_file_id == VendorFile.id)
+        .where(
+            VendorFile.component_id == vendor_file.component_id,
+            # This file is still "running" (this is its last stage); the others
+            # must have finished processing.
+            or_(VendorFile.id == vendor_file.id, VendorFile.processing_status == ProcessingStatus.COMPLETED),
+        )
+    ).all()
+    evaluate(session, list(documents), [session.get(Component, vendor_file.component_id)])
 
 
 def evaluate_everything(session: Session) -> int:

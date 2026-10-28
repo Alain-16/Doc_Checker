@@ -226,6 +226,7 @@ class ComplianceFinding(Base):
         CheckConstraint("resolved = (resolved_at IS NOT NULL)", name="resolved_fields_together"),
         enum_check("status", ComplianceStatus),
         enum_check("severity", FindingSeverity),
+        enum_check("previous_status", ComplianceStatus)
     )
 
     document_id: Mapped[uuid.UUID | None] = mapped_column(
@@ -241,6 +242,7 @@ class ComplianceFinding(Base):
         ForeignKey("compliance_rule_versions.id", ondelete="RESTRICT"), index=True
     )
     status: Mapped[ComplianceStatus] = mapped_column(string_enum(ComplianceStatus))
+    previous_status: Mapped[ComplianceStatus | None] = mapped_column(string_enum(ComplianceStatus))
     severity: Mapped[FindingSeverity] = mapped_column(string_enum(FindingSeverity))
     # One-sentence explanation shown to the user (Feature 7).
     message: Mapped[str] = mapped_column(Text)

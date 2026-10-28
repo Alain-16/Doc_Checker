@@ -9,12 +9,14 @@ from src.config.database import engine
 # importing the pipeline (and with it PyMuPDF, OpenCV and Tesseract).
 PROCESS_VENDOR_FILE_TASK = "process_vendor_file"
 EVALUATE_ALL_COMPLIANCE_TASK = "evaluate_all_compliance"
+FOLLOW_UP_ALERTS_TASK = "follow_up_alerts"
 
 celery_app = Celery(
     "doc_checker",
     broker=str(get_settings().redis_url),
     # Modules the worker imports at start-up, so it knows their tasks.
-    include=["src.workers.pipeline", "src.workers.compliance_tasks"],
+    include=["src.workers.pipeline", "src.workers.compliance_tasks","src.workers.alert_tasks"],
+    
 )
 
 celery_app.conf.update(
@@ -33,6 +35,10 @@ celery_app.conf.update(
         "nightly-compliance-evaluation": {
             "task": EVALUATE_ALL_COMPLIANCE_TASK,
             "schedule": crontab(hour=2, minute=0),  # 02:00 UTC, Celery's default timezone
+        },
+        "hourly-alert-follow-up":{
+            "task": FOLLOW_UP_ALERTS_TASK,
+            "schedule": crontab(minute=15),
         },
     },
 )
