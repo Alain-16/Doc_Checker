@@ -1,5 +1,11 @@
 from src.models.base import Base
-from src.models.compliance import ComplianceFinding, DocumentAttribute, KeyAttribute
+from src.models.compliance import (
+    ComplianceFinding,
+    ComplianceRule,
+    ComplianceRuleVersion,
+    DocumentAttribute,
+    KeyAttribute,
+)
 from src.models.document import Document, DocumentDate, DocumentType
 from src.models.vendor import Component, Vendor
 from src.models.vendor_file import Page, VendorFile
@@ -13,6 +19,8 @@ __all__ = [
     "Base",
     "Chunk",
     "ComplianceFinding",
+    "ComplianceRule",
+    "ComplianceRuleVersion",
     "Component",
     "Document",
     "DocumentAttribute",

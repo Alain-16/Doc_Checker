@@ -1,4 +1,5 @@
 from celery import Celery
+from celery.schedules import crontab
 from celery.signals import worker_process_init
 
 from src.config.settings import get_settings
@@ -7,12 +8,13 @@ from src.config.database import engine
 # Task names are plain strings so the API can queue a job by name without
 # importing the pipeline (and with it PyMuPDF, OpenCV and Tesseract).
 PROCESS_VENDOR_FILE_TASK = "process_vendor_file"
+EVALUATE_ALL_COMPLIANCE_TASK = "evaluate_all_compliance"
 
 celery_app = Celery(
     "doc_checker",
     broker=str(get_settings().redis_url),
     # Modules the worker imports at start-up, so it knows their tasks.
-    include=["src.workers.pipeline"],
+    include=["src.workers.pipeline", "src.workers.compliance_tasks"],
 )
 
 celery_app.conf.update(
@@ -25,6 +27,14 @@ celery_app.conf.update(
     # Job status lives in vendor_files.processing_state, so Celery's own
     # result storage isn't needed.
     task_ignore_result=True,
+    # Celery Beat (a separate process: `celery ... beat`) queues these on a clock.
+    beat_schedule={
+        # Documents go stale as time passes, with no new upload (Feature 7).
+        "nightly-compliance-evaluation": {
+            "task": EVALUATE_ALL_COMPLIANCE_TASK,
+            "schedule": crontab(hour=2, minute=0),  # 02:00 UTC, Celery's default timezone
+        },
+    },
 )
 
 

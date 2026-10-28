@@ -6,6 +6,7 @@ from sqlalchemy import update
 from sqlalchemy.orm import Session
 
 from src.classification.classifier import classify_documents
+from src.compliance.evaluation import evaluate_compliance
 from src.config.database import SessionLocal
 from src.extraction.dates import extract_dates
 from src.extraction.key_attributes import extract_key_attributes
@@ -37,6 +38,7 @@ STAGES: list[tuple[str, StageFunction]] = [
     ("embed", embed_chunks),
     ("extract_dates", extract_dates),
     ("extract_key_attributes", extract_key_attributes),
+    ("evaluate_compliance", evaluate_compliance),
 ]
 
 STAGE_RUNNING = "running"

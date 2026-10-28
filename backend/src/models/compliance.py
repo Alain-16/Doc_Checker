@@ -8,7 +8,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.models.base import EMPTY_JSONB, EMPTY_TEXT_ARRAY, Base, enum_check, string_enum
-from src.models.document import ComplianceStatus, Document, ResultMethod
+from src.models.document import ComplianceStatus, Document, DocumentType, ResultMethod
 
 
 class AttributeGroup(StrEnum):
@@ -41,6 +41,20 @@ class FindingSeverity(StrEnum):
     INFO = "info"
     WARNING = "warning"
     CRITICAL = "critical"
+
+
+class RuleKind(StrEnum):
+    """The checks the engine knows (Feature 7). Each is validated code in
+    src/compliance/rule_kinds.py; QA configures rules as instances of these."""
+
+    DOCUMENT_AGE = "document_age"
+    MISSING_FIELD = "missing_field"
+    RECORD_COMPLETENESS = "record_completeness"
+    DATE_CONFLICT = "date_conflict"
+    LOW_CONFIDENCE = "low_confidence"
+    # Component-level: about what a component's documents are, not one document.
+    MISSING_DOCUMENT = "missing_document"
+    REVISION_WITHOUT_REPLACEMENT = "revision_without_replacement"
 
 
 class KeyAttribute(Base):
@@ -126,8 +140,62 @@ class DocumentAttribute(Base):
     key_attribute: Mapped[KeyAttribute] = relationship(back_populates="values")
 
 
+class ComplianceRule(Base):
+    """A configured rule: which check, for which document type. Its settings live in versions.
+
+    The rule row never changes after creation; every edit adds a version, so the
+    rules in force on any past date can always be shown (Part 11).
+    """
+
+    __tablename__ = "compliance_rules"
+    __table_args__ = (enum_check("kind", RuleKind),)
+
+    # Stable name used in findings and messages, e.g. "COMPLIANCE_BULLETIN_AGE".
+    code: Mapped[str] = mapped_column(unique=True)
+    kind: Mapped[RuleKind] = mapped_column(string_enum(RuleKind))
+    # Empty = every document type (and always empty for component-level kinds).
+    document_type_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("document_types.id", ondelete="RESTRICT"), index=True
+    )
+
+    document_type: Mapped["DocumentType | None"] = relationship()
+    versions: Mapped[list["ComplianceRuleVersion"]] = relationship(
+        back_populates="rule", order_by="ComplianceRuleVersion.version"
+    )
+
+    @property
+    def current(self) -> "ComplianceRuleVersion":
+        return self.versions[-1]
+
+
+class ComplianceRuleVersion(Base):
+    """One version of a rule's settings. Append-only: a database trigger blocks UPDATE and DELETE."""
+
+    __tablename__ = "compliance_rule_versions"
+    __table_args__ = (
+        UniqueConstraint("rule_id", "version"),
+        CheckConstraint("version >= 1", name="version_positive"),
+        enum_check("severity", FindingSeverity),
+    )
+
+    rule_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("compliance_rules.id", ondelete="RESTRICT"))
+    version: Mapped[int]
+    name: Mapped[str]
+    # The kind's settings, checked against its parameter model before saving,
+    # e.g. {"governing_date_types": ["signature"], "threshold_months": 36, "warning_months": 6}.
+    parameters: Mapped[dict[str, Any]] = mapped_column(default=dict, server_default=EMPTY_JSONB)
+    severity: Mapped[FindingSeverity] = mapped_column(string_enum(FindingSeverity))
+    active: Mapped[bool]
+    # Why this version exists. Required: the audit trail must say why a rule changed.
+    change_reason: Mapped[str] = mapped_column(Text)
+    # Who made the change. Empty until users exist (Feature 14); then required.
+    changed_by_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"))
+
+    rule: Mapped[ComplianceRule] = relationship(back_populates="versions")
+
+
 class ComplianceFinding(Base):
-    """A conclusion of the rules engine about one document (Feature 7).
+    """A conclusion of the rules engine about one document or one component (Feature 7).
 
     History is kept: when a later evaluation changes the outcome, the old finding is
     marked resolved and a new one is added. A run that changes nothing only updates
@@ -143,18 +211,35 @@ class ComplianceFinding(Base):
             "document_id",
             "rule_code",
             unique=True,
-            postgresql_where=text("NOT resolved"),
+            postgresql_where=text("NOT resolved AND document_id IS NOT NULL"),
         ),
+        Index(
+            "uq_compliance_findings_open_component_rule",
+            "component_id",
+            "rule_code",
+            unique=True,
+            postgresql_where=text("NOT resolved AND component_id IS NOT NULL"),
+        ),
+        # About exactly one thing: a document, or a component as a whole
+        # ("no Quality Certificate" isn't about any one document).
+        CheckConstraint("(document_id IS NULL) <> (component_id IS NULL)", name="one_subject"),
         CheckConstraint("resolved = (resolved_at IS NOT NULL)", name="resolved_fields_together"),
         enum_check("status", ComplianceStatus),
         enum_check("severity", FindingSeverity),
     )
 
-    document_id: Mapped[uuid.UUID] = mapped_column(
+    document_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("documents.id", ondelete="RESTRICT"), index=True
     )
-    # Which rule produced this, e.g. "TECHNICAL_BULLETIN_AGE".
+    component_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("components.id", ondelete="RESTRICT"), index=True
+    )
+    # Which rule produced this, e.g. "TECHNICAL_SUPPORT_BULLETIN_AGE".
     rule_code: Mapped[str]
+    # The exact rule settings that produced it.
+    rule_version_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("compliance_rule_versions.id", ondelete="RESTRICT"), index=True
+    )
     status: Mapped[ComplianceStatus] = mapped_column(string_enum(ComplianceStatus))
     severity: Mapped[FindingSeverity] = mapped_column(string_enum(FindingSeverity))
     # One-sentence explanation shown to the user (Feature 7).
@@ -162,11 +247,10 @@ class ComplianceFinding(Base):
     # The facts behind the decision, e.g. {"date_id": "...", "issue_date": "2009-11-23", "page": 24}.
     evidence: Mapped[dict[str, Any]] = mapped_column(default=dict, server_default=EMPTY_JSONB)
     governing_date: Mapped[date | None]
-    # Version of the rule policy used. Becomes a foreign key to rule_policies in Feature 7.
-    policy_version: Mapped[int]
     last_evaluated_at: Mapped[datetime]
 
     resolved: Mapped[bool] = mapped_column(default=False, server_default=false())
     resolved_at: Mapped[datetime | None]
 
-    document: Mapped[Document] = relationship(back_populates="findings")
+    document: Mapped[Document | None] = relationship(back_populates="findings")
+    rule_version: Mapped[ComplianceRuleVersion] = relationship()
