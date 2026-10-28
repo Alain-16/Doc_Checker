@@ -4,7 +4,9 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from src.models import AlertPolicy
+from src.auth.signatures import sign
+from src.models import AlertPolicy, User
+from src.models.audit import SignatureMeaning
 from src.models.alert import AlertEvent
 from src.models.document import ComplianceStatus
 from src.models.user import UserRole
@@ -63,6 +65,7 @@ def save_policy_version(
         session: Session,
         event: AlertEvent,
         *,
+        signer: User,
         enabled: bool,
         audience_role: UserRole,
         reminder_days: int,
@@ -92,7 +95,9 @@ def save_policy_version(
         # never silently changes what this version meant.
         parameters=checked.model_dump(mode="json"),
         change_reason=change_reason,
+        changed_by_id=signer.id,
     )
+    sign(session, signer, SignatureMeaning.APPROVAL, policy, change_reason)
     session.add(policy)
     session.flush()
     return policy

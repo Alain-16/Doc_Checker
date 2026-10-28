@@ -7,16 +7,19 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
+from src.audit.trail import set_audit_reason
+from src.auth.dependencies import POLICY_EDITORS, confirm_signature_or_401, current_user, require_role
 from src.review.policies import PolicyError, current_policies, save_policy_version
 from src.review.raising import refresh_alerts
 from src.config.database import get_session
-from src.models import Alert, AlertPolicy
+from src.models import Alert, AlertPolicy, User
 from src.models.alert import AlertEvent, AlertStatus, DeliveryChannel, DeliveryKind, DeliveryStatus
 from src.models.compliance import FindingSeverity
 from src.models.user import UserRole
 
 
-router = APIRouter(tags=["alerts"])
+# Everyone signed in sees and acknowledges alerts; policy changes need an editor's e-signature.
+router = APIRouter(tags=["alerts"], dependencies=[Depends(current_user)])
 LIVE_STATUSES = [AlertStatus.OPEN, AlertStatus.ACKNOWLEDGED]
 MAX_PAGE_SIZE = 500
 
@@ -102,6 +105,8 @@ class PolicySettings(BaseModel):
     escalate_after_days: int = Field(gt=0)
     parameters: dict[str, Any] = Field(default_factory=dict)
     change_reason: str = Field(min_length=10, description="Why the policy changes (audit trail).")
+    # The signer's password again: every change is electronically signed (Part 11 §11.200).
+    password: str = Field(min_length=1, description="Your password, to sign this change.")
 
 
 
@@ -149,13 +154,18 @@ def read_alert(alert_id: uuid.UUID, session: Session = Depends(get_session)) -> 
 
 
 @router.post("/alerts/{alert_id}/acknowledge", response_model=AlertDetailOut)
-def acknowledge_alert(alert_id: uuid.UUID, body: Acknowledgement, session: Session = Depends(get_session)) -> Alert:
+def acknowledge_alert(
+    alert_id: uuid.UUID, body: Acknowledgement, user: User = Depends(current_user), session: Session = Depends(get_session)
+) -> Alert:
     """"I've seen it and I'm on it." Stops reminders and escalation; doesn't close the alert."""
     alert = get_alert(session, alert_id)
     if alert.status != AlertStatus.OPEN:
         raise HTTPException(status.HTTP_409_CONFLICT, f"Only open alerts can be acknowledged; this one is {alert.status}.")
+    # Not a signature: "I've seen it" is not a decision. The audit trail still records who and why.
+    set_audit_reason(session, body.note or "Alert acknowledged.")
     alert.status = AlertStatus.ACKNOWLEDGED
     alert.acknowledged_at = datetime.now(UTC)
+    alert.acknowledged_by_id = user.id
     alert.acknowledgement_note = body.note
     session.commit()
     return alert
@@ -174,13 +184,21 @@ def policy_history(event: AlertEvent, session: Session = Depends(get_session)) -
 
 
 @router.put("/alert-policies/{event}", response_model=PolicyOut)
-def change_policy(event: AlertEvent, body: PolicySettings, session: Session = Depends(get_session)) -> AlertPolicy:
-    """Save new settings as the next version, then bring live alerts in line with them."""
+def change_policy(
+    event: AlertEvent,
+    body: PolicySettings,
+    user: User = Depends(require_role(*POLICY_EDITORS)),
+    session: Session = Depends(get_session),
+) -> AlertPolicy:
+    """Save new settings as the next, signed version, then bring live alerts in line with them."""
+    confirm_signature_or_401(session, user, body.password)
     try:
-        policy = save_policy_version(session, event, **body.model_dump())
+        policy = save_policy_version(session, event, signer=user, **body.model_dump(exclude={"password"}))
     except PolicyError as error:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error)) from error
     # Cheap (a few queries), so done right away: turning an event off resolves its alerts now.
+    # Those resolutions are changes made by this user, so they carry the policy change's reason.
+    set_audit_reason(session, f"Alert policy for {event.value} changed: {body.change_reason}")
     refresh_alerts(session, datetime.now(UTC))
     session.commit()
     return policy

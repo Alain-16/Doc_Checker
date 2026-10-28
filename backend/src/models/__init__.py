@@ -10,7 +10,7 @@ from src.models.document import Document, DocumentDate, DocumentType
 from src.models.vendor import Component, Vendor
 from src.models.vendor_file import Page, VendorFile
 from .review import ReviewItem
-from .user import User
+from .user import User, AccountToken, UserSession
 from .chunk import Chunk
 from .audit import AuditEvent, ElectronicSignature
 from .alert import Alert,AlertDelivery, AlertPolicy
@@ -19,6 +19,8 @@ __all__ = [
     "Alert",
     "AlertDelivery",
     "AlertPolicy",
+    "AccountToken",
+    "UserSession",
     "Base",
     "Chunk",
     "ComplianceFinding",

@@ -7,17 +7,16 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
+from src.auth.dependencies import POLICY_EDITORS, confirm_signature_or_401, current_user, require_role
 from src.compliance.rule_kinds import RULE_KINDS
 from src.compliance.rules import RuleError, create_rule, update_rule
 from src.config.database import get_session
-from src.models import ComplianceRule
+from src.models import ComplianceRule, User
 from src.models.compliance import FindingSeverity, RuleKind
 from src.workers.celery_app import EVALUATE_ALL_COMPLIANCE_TASK, celery_app
 
-# Not protected yet: users, roles and e-signatures come with Feature 14 (your
-# decision, 2026-10-27). Until then every change still needs a reason and is
-# kept as an unchangeable version.
-router = APIRouter(prefix="/compliance-rules", tags=["compliance rules"])
+# Everyone signed in can read rules; Compliance Specialists and Admins change them, with an e-signature.
+router = APIRouter(prefix="/compliance-rules", tags=["compliance rules"], dependencies=[Depends(current_user)])
 
 
 # --- Request and response shapes ---
@@ -63,6 +62,8 @@ class RuleSettings(BaseModel):
     severity: FindingSeverity
     active: bool = True
     change_reason: str = Field(min_length=10, description="Why this rule is created or changed (audit trail).")
+    # The signer's password again: every change is electronically signed (Part 11 §11.200).
+    password: str = Field(min_length=1, description="Your password, to sign this change.")
 
 
 class RuleCreate(RuleSettings):
@@ -134,9 +135,12 @@ def read_rule(rule_id: uuid.UUID, session: Session = Depends(get_session)) -> Ru
 
 
 @router.post("", response_model=RuleDetailOut, status_code=status.HTTP_201_CREATED)
-def add_rule(body: RuleCreate, session: Session = Depends(get_session)) -> RuleOut:
+def add_rule(
+    body: RuleCreate, user: User = Depends(require_role(*POLICY_EDITORS)), session: Session = Depends(get_session)
+) -> RuleOut:
+    confirm_signature_or_401(session, user, body.password)
     try:
-        rule = create_rule(session, **body.model_dump())
+        rule = create_rule(session, signer=user, **body.model_dump(exclude={"password"}))
     except RuleError as error:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error)) from error
     save_and_reevaluate(session)
@@ -144,11 +148,17 @@ def add_rule(body: RuleCreate, session: Session = Depends(get_session)) -> RuleO
 
 
 @router.put("/{rule_id}", response_model=RuleDetailOut)
-def change_rule(rule_id: uuid.UUID, body: RuleSettings, session: Session = Depends(get_session)) -> RuleOut:
-    """Save new settings as the next version. To retire a rule, send active=false."""
+def change_rule(
+    rule_id: uuid.UUID,
+    body: RuleSettings,
+    user: User = Depends(require_role(*POLICY_EDITORS)),
+    session: Session = Depends(get_session),
+) -> RuleOut:
+    """Save new settings as the next, signed version. To retire a rule, send active=false."""
     rule = get_rule(session, rule_id)
+    confirm_signature_or_401(session, user, body.password)
     try:
-        update_rule(session, rule, **body.model_dump())
+        update_rule(session, rule, signer=user, **body.model_dump(exclude={"password"}))
     except RuleError as error:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error)) from error
     save_and_reevaluate(session)

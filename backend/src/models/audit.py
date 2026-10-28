@@ -7,6 +7,8 @@ from sqlalchemy import CheckConstraint, ForeignKey, Index, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from src.models.base import Base, enum_check, string_enum
+from sqlalchemy.dialects.postgresql import JSONB
+
 
 # Length of a SHA-256 hash written as hexadecimal text.
 SHA256_HEX_LENGTH = 64
@@ -97,8 +99,8 @@ class AuditEvent(Base):
     table_name: Mapped[str]
     record_id: Mapped[uuid.UUID]
     # The record's values before and after the change.
-    before: Mapped[dict[str, Any] | None]
-    after: Mapped[dict[str, Any] | None]
+    before: Mapped[dict[str, Any] | None] = mapped_column(JSONB(none_as_null=True))
+    after: Mapped[dict[str, Any] | None] = mapped_column(JSONB(none_as_null=True))
     reason: Mapped[str | None] = mapped_column(Text)
 
     # Set when the change required a signature (review decisions, policy changes, deletions).

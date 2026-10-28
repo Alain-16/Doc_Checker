@@ -7,10 +7,11 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from src.auth.dependencies import current_user
 from src.config.database import get_session
 from src.models import Component, Vendor
 
-router = APIRouter(tags=["vendors"])
+router = APIRouter(tags=["vendors"], dependencies=[Depends(current_user)])
 
 
 # --- Request and response shapes (Pydantic checks incoming JSON against these) ---

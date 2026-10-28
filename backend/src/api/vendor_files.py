@@ -6,6 +6,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from src.auth.dependencies import current_user
 from src.config.database import get_session
 from src.ingestion.storage import open_original
 from src.ingestion.upload import DuplicateUpload, register_upload
@@ -14,7 +15,8 @@ from src.models import VendorFile
 from src.models.vendor_file import ProcessingStatus
 from src.workers.celery_app import PROCESS_VENDOR_FILE_TASK, celery_app
 
-router = APIRouter(prefix="/vendor-files", tags=["vendor files"])
+# Every signed-in role uploads and follows files (PRD: QA Analysts upload).
+router = APIRouter(prefix="/vendor-files", tags=["vendor files"], dependencies=[Depends(current_user)])
 
 
 class UploadAccepted(BaseModel):

@@ -6,7 +6,60 @@ from sqlalchemy import CheckConstraint, ForeignKey, text, true
 from sqlalchemy.orm import Mapped, mapped_column
 
 from src.models.base import Base, enum_check, string_enum
+from sqlalchemy import CheckConstraint, ForeignKey, String, text, true
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
+
+
+class TokenPurpose(StrEnum):
+    INVITE = "invite"
+    PASSWORD_RESET = "password_reset"
+
+
+class SessionEndReason(StrEnum):
+    LOGOUT = "logout"
+    IDLE = "idle"  # no request for longer than the idle limit
+    REVOKED = "revoked"  # ended by the system: password reset, deactivation, lock
+
+
+# Length of a SHA-256 hash written as hexadecimal text.
+TOKEN_HASH_LENGTH = 64
+
+class UserSession(Base):
+    """One signed-in browser. The cookie holds a random token; only its hash is stored here,
+    so a copy of this table can't be used to sign in."""
+
+    __tablename__ = "user_sessions"
+    __table_args__ = (
+        CheckConstraint("(ended_at IS NULL) = (end_reason IS NULL)", name="ended_fields_together"),
+        enum_check("end_reason", SessionEndReason),
+    )
+
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"), index=True)
+    token_hash: Mapped[str] = mapped_column(String(TOKEN_HASH_LENGTH), unique=True)
+    # Empty until the MFA code is checked: until then the session can only finish signing in.
+    mfa_verified_at: Mapped[datetime | None]
+    # Moved forward on every request; the idle timeout is measured from it.
+    last_seen_at: Mapped[datetime]
+    ended_at: Mapped[datetime | None]
+    end_reason: Mapped[SessionEndReason | None] = mapped_column(string_enum(SessionEndReason))
+
+    user: Mapped["User"] = relationship()
+
+
+class AccountToken(Base):
+    """A single-use link sent by email (invite or password reset). Only the hash is stored."""
+
+    __tablename__ = "account_tokens"
+    __table_args__ = (enum_check("purpose", TokenPurpose),)
+
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"), index=True)
+    purpose: Mapped[TokenPurpose] = mapped_column(string_enum(TokenPurpose))
+    token_hash: Mapped[str] = mapped_column(String(TOKEN_HASH_LENGTH), unique=True)
+    expires_at: Mapped[datetime]
+    used_at: Mapped[datetime | None]
+
+    user: Mapped["User"] = relationship()
 
 class UserRole(StrEnum):
     QA_ANALYST = "qa_analyst"

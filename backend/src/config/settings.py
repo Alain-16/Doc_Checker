@@ -22,7 +22,7 @@ class Settings(BaseSettings):
 
         extra="ignore",
     )
-
+    app_base_url: HttpUrl = HttpUrl("http://localhost:3000")
     # --- Application ---
    
     app_env: Literal["local", "staging", "production"]
@@ -45,6 +45,10 @@ class Settings(BaseSettings):
     textract_region: str | None = None
 
     openai_api_key: SecretStr
+    
+    default_admin_email: str | None = None
+    default_admin_name: str | None = None
+    default_admin_password: SecretStr | None = None
 
     # --- Chunking (Feature 10) ---
     # Changing these needs a re-index (scripts/reindex.py); no OCR is re-run.
@@ -52,7 +56,15 @@ class Settings(BaseSettings):
     chunk_max_tokens: int = 512
     # Share of each chunk repeated at the start of the next (PRD: 0, 10 or 20%).
     chunk_overlap_percent: int = 10
-
+    
+    # Encrypts MFA secrets at rest. A Fernet key: generate one with
+    #   uv run python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+    mfa_encryption_key: SecretStr
+    session_idle_minutes: int = 30  # PRD: 15-30 minutes
+    max_failed_logins: int = 5  # PRD: lock the account after this many
+    # "console" prints emails (local development); "ses" sends them through AWS SES.
+    email_backend: Literal["console", "ses"] = "console"
+    email_sender: str = "no-reply@doc-checker.local"
 
 @lru_cache
 def get_settings() -> Settings:

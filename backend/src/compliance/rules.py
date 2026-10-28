@@ -1,12 +1,14 @@
 """Creating and changing compliance rules: every change is a new, validated version."""
 
 import re
+import uuid
 from typing import Any
 
 from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from src.auth.signatures import sign
 from src.compliance.rule_kinds import (
     RULE_KINDS,
     MissingDocumentParameters,
@@ -15,7 +17,8 @@ from src.compliance.rule_kinds import (
     RevisionWithoutReplacementParameters,
     RuleParameters,
 )
-from src.models import ComplianceRule, ComplianceRuleVersion, DocumentType, KeyAttribute
+from src.models import ComplianceRule, ComplianceRuleVersion, DocumentType, KeyAttribute, User
+from src.models.audit import SignatureMeaning
 from src.models.compliance import AttributeValueType, FindingSeverity, RuleKind
 
 # "COMPLIANCE_BULLETIN_AGE": capitals, digits, underscores.
@@ -70,6 +73,7 @@ def validated_parameters(session: Session, kind: RuleKind, parameters: dict[str,
 def create_rule(
     session: Session,
     *,
+    signer: User,
     code: str,
     kind: RuleKind,
     document_type: str | None,
@@ -91,17 +95,21 @@ def create_rule(
         if document_type_id is None:
             raise RuleError(f"Unknown document type: {document_type}.")
 
-    rule = ComplianceRule(code=code, kind=kind, document_type_id=document_type_id)
-    rule.versions.append(
-        ComplianceRuleVersion(
-            version=1,
-            name=name,
-            parameters=validated_parameters(session, kind, parameters),
-            severity=severity,
-            active=active,
-            change_reason=change_reason,
-        )
+    # Ids are set here, not by the database, because the signature's
+    # fingerprint covers the version's rule_id and must be taken before saving.
+    rule = ComplianceRule(id=uuid.uuid4(), code=code, kind=kind, document_type_id=document_type_id)
+    version = ComplianceRuleVersion(
+        rule_id=rule.id,
+        version=1,
+        name=name,
+        parameters=validated_parameters(session, kind, parameters),
+        severity=severity,
+        active=active,
+        change_reason=change_reason,
+        changed_by_id=signer.id,
     )
+    sign(session, signer, SignatureMeaning.APPROVAL, version, change_reason)
+    rule.versions.append(version)
     session.add(rule)
     session.flush()
     return rule
@@ -111,6 +119,7 @@ def update_rule(
     session: Session,
     rule: ComplianceRule,
     *,
+    signer: User,
     name: str,
     parameters: dict[str, Any],
     severity: FindingSeverity,
@@ -120,13 +129,16 @@ def update_rule(
     """Add the next version. The rule's code, kind and document type never change:
     a rule about something else is a new rule, so old findings keep their meaning."""
     version = ComplianceRuleVersion(
+        rule_id=rule.id,
         version=rule.current.version + 1,
         name=name,
         parameters=validated_parameters(session, rule.kind, parameters),
         severity=severity,
         active=active,
         change_reason=change_reason,
+        changed_by_id=signer.id,
     )
+    sign(session, signer, SignatureMeaning.APPROVAL, version, change_reason)
     rule.versions.append(version)
     session.flush()
     return version

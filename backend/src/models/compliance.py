@@ -190,6 +190,9 @@ class ComplianceRuleVersion(Base):
     change_reason: Mapped[str] = mapped_column(Text)
     # Who made the change. Empty until users exist (Feature 14); then required.
     changed_by_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"))
+    signature_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("electronic_signatures.id", ondelete="RESTRICT")
+    )
 
     rule: Mapped[ComplianceRule] = relationship(back_populates="versions")
 
