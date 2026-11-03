@@ -1,8 +1,9 @@
 import uuid
+from datetime import datetime
 from enum import StrEnum
 from typing import Any
 
-from sqlalchemy import ForeignKey, Text, text
+from sqlalchemy import ForeignKey, Text, func, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -54,6 +55,11 @@ class Message(Base):
     # (document, pages, compliance status), exactly as shown to the user.
     route: Mapped[QuestionRoute | None] = mapped_column(string_enum(QuestionRoute))
     sources: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, default=list, server_default=EMPTY_JSON_LIST)
+
+    # The question and its answer are saved in one transaction, where now() returns
+    # the same time for both; clock_timestamp() is the real time of each insert, so
+    # ordering by created_at keeps every answer after its question.
+    created_at: Mapped[datetime] = mapped_column(server_default=func.clock_timestamp(), sort_order=1)
 
     conversation: Mapped[Conversation] = relationship(back_populates="messages")
 

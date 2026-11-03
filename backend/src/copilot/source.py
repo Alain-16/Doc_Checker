@@ -82,6 +82,22 @@ def number_sources(sources: list[Source]) -> list[Source]:
     return sources
 
 
+def stored_sources(session: Session, stored: list[dict[str, Any]]) -> list[Source]:
+    """An earlier answer's sources (as saved on its message) rebuilt as evidence.
+
+    The excerpt and pages are what was shown; the document's status is read fresh.
+    """
+    ids = [uuid.UUID(s["document_id"]) for s in stored if s.get("document_id")]
+    contexts = document_contexts(session, ids)
+    sources = []
+    for s in stored:
+        pages = s.get("pages") or [None, None]
+        context = contexts.get(uuid.UUID(s["document_id"])) if s.get("document_id") else None
+        sources.append(Source(kind=s["kind"], text=s["excerpt"], context=context,
+                              page_start=pages[0], page_end=pages[1], section=s.get("section")))
+    return sources
+
+
 def sources_for_prompt(sources: list[Source]) -> str:
     """The evidence as the answering model sees it: numbered, with where it comes from."""
     blocks = []

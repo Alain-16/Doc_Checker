@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from src.copilot.answers import NOT_FOUND, OUT_OF_SCOPE, Claim, check_grounding, compose, draft_answer
 from src.copilot.content_search import find_passages
 from src.copilot.database_tools import FindingsTool, choose_tool, read_each_document, run_findings, run_tool
-from src.copilot.source import Source, number_sources
+from src.copilot.source import Source, number_sources, stored_sources
 from src.copilot.understanding import QuestionPlan, Scope, plan_question, resolve_scope
 from src.llm.models import MODEL_BY_TASK, LlmTask
 from src.models import Conversation, DocumentType, Message, QueryLog, User
@@ -26,6 +26,7 @@ class AnswerState(TypedDict, total=False):
 
     question: str
     history: list[tuple[MessageRole, str]]
+    previous_sources: list[dict[str, Any]]  # the last answer's sources, as saved on its message
     plan: QuestionPlan
     scope: Scope
     notes: list[str]  # said before the answer: broadened search, unknown names
@@ -49,10 +50,13 @@ def db(config: RunnableConfig) -> Session:
 
 def understand(state: AnswerState, config: RunnableConfig) -> AnswerState:
     session = db(config)
-    type_names = list(session.scalars(select(DocumentType.name)))
-    plan = plan_question(state["question"], state["history"], type_names)
+    types = dict(session.execute(select(DocumentType.name, DocumentType.display_name)).tuples().all())
+    plan = plan_question(state["question"], state["history"], types)
     scope = resolve_scope(session, plan)
     notes = [f"I have no documents from a vendor or component called '{name}'." for name in scope.unmatched]
+    if scope.searched_as_topic:
+        # Not a known component: search for it as a subject instead of stopping.
+        plan.topic = " ".join([plan.topic, *(name for name in scope.searched_as_topic if name.casefold() not in plan.topic.casefold())])
     return {"plan": plan, "scope": scope, "notes": notes, "retrieved": [], "tool_calls": []}
 
 
@@ -66,6 +70,10 @@ def next_step(state: AnswerState) -> str:
 
 def content(state: AnswerState, config: RunnableConfig) -> AnswerState:
     plan = state["plan"]
+    if plan.about_previous_answer and state["previous_sources"]:
+        # "Show me the source for that": the evidence already shown, not a new search
+        # (a new search can keep different passages and lose some of them).
+        return {"sources": stored_sources(db(config), state["previous_sources"]), "retrieved": []}
     sources, broadened, log = find_passages(db(config), plan.standalone_question, plan.topic, state["scope"])
     notes = state["notes"] + ([f"Nothing matched the exact scope, so I searched {broadened}."] if broadened else [])
     return {"sources": sources, "retrieved": log, "notes": notes}
@@ -91,8 +99,9 @@ def findings(state: AnswerState, config: RunnableConfig) -> AnswerState:
 
 def cross_document(state: AnswerState, config: RunnableConfig) -> AnswerState:
     plan = state["plan"]
-    sources, summary = read_each_document(db(config), plan.standalone_question, plan.topic, state["scope"])
-    return {"sources": with_summary(sources, summary), "tool_calls": [{"call": {"tool": "read_each_document", "topic": plan.topic}, "result": summary}]}
+    sources, summary, call = read_each_document(db(config), plan.standalone_question, plan.topic, state["scope"])
+    log = {"tool": "read_each_document", "topic": plan.topic, "documents": call.model_dump(mode="json")}
+    return {"sources": with_summary(sources, summary), "tool_calls": [{"call": log, "result": summary}]}
 
 
 def answer(state: AnswerState, config: RunnableConfig) -> AnswerState:
@@ -130,7 +139,7 @@ def build_graph():
         ]:
         graph.add_node(name,step)
     graph.add_edge(START, "understand")
-    graph.add_conditional_edge("understand", next_step)
+    graph.add_conditional_edges("understand", next_step)
     for route in ("content","aggregate","findings","cross_document"):
         graph.add_edge(route, "answer")
     graph.add_edge("answer", END)
@@ -144,7 +153,12 @@ def ask(session: Session, user: User, conversation: Conversation, question: str)
     """Answer a question in a conversation; save both messages and the audit log. The caller commits."""
     started = time.perf_counter()
     history = [(message.role, message.content) for message in conversation.messages]
-    state = ASSISTANT.invoke({"question": question, "history": history}, config={"configurable": {"session": session}})
+    answers_so_far = [m for m in conversation.messages if m.role == MessageRole.ASSISTANT]
+    previous_sources = answers_so_far[-1].sources if answers_so_far else []
+    state = ASSISTANT.invoke(
+        {"question": question, "history": history, "previous_sources": previous_sources},
+        config={"configurable": {"session": session}},
+    )
 
     plan, scope = state["plan"], state["scope"]
     # Appended to the conversation (not just added to the session), so its loaded
@@ -167,7 +181,8 @@ def ask(session: Session, user: User, conversation: Conversation, question: str)
             route=QuestionRoute(plan.route),
             plan={**plan.model_dump(mode="json"), "matched": {
                 "vendor_ids": [str(i) for i in scope.vendor_ids], "component_ids": [str(i) for i in scope.component_ids],
-                "document_types": scope.document_type_names, "unmatched": scope.unmatched}},
+                "document_types": scope.document_type_names, "unmatched": scope.unmatched,
+                "searched_as_topic": scope.searched_as_topic}},
             retrieved=state.get("retrieved", []),
             tool_calls=state.get("tool_calls", []),
             answer=state["answer"],

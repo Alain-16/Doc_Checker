@@ -43,7 +43,9 @@ REASONING_EFFORT_BY_TASK: dict[LlmTask, str] = {
     LlmTask.ROUTE_QUESTION: "minimal",
     LlmTask.RERANK_PASSAGES: "minimal",
     LlmTask.CHOOSE_QUERY_TOOL: "minimal",
-    LlmTask.ANSWER_QUESTION: "high",
+    # Measured 2026-11-03: "high" spent 48 of 54 s here; the claims come from the
+    # sources and the grounding check verifies each one, so "low" is enough.
+    LlmTask.ANSWER_QUESTION: "low",
     LlmTask.CHECK_GROUNDING: "minimal",
 }
 
