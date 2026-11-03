@@ -166,3 +166,62 @@ def run_key_attribute(session: Session, call: KeyAttributeTool, scope: Scope) ->
         for row in rows[:MAX_RECORDS]
     ]
     return sources, f"{len(rows)} document(s) have a recorded '{call.attribute}'"
+
+
+def run_findings(session: Session, call: FindingsTool, scope: Scope) -> tuple[list[Source], str]:
+    in_scope = ComplianceFinding.document_id.in_(scoped_documents(scope))
+    # Component-level findings ("no current bulletin") belong to the components asked
+    # about: named ones, the named vendors' ones, or all when nothing is named.
+    if scope.component_ids:
+        in_scope = in_scope | ComplianceFinding.component_id.in_(scope.component_ids)
+    elif scope.vendor_ids:
+        vendor_components = select(Component.id).where(Component.vendor_id.in_(scope.vendor_ids))
+        in_scope = in_scope | ComplianceFinding.component_id.in_(vendor_components)
+    else:
+        in_scope = in_scope | ComplianceFinding.component_id.is_not(None)
+    query = (
+        select(ComplianceFinding)
+        .where(ComplianceFinding.resolved.is_(False), in_scope)
+        .options(selectinload(ComplianceFinding.rule_version))
+        .order_by(ComplianceFinding.created_at)
+    )
+    if call.statuses:
+        query = query.where(ComplianceFinding.status.in_(call.statuses))
+    findings = session.scalars(query).all()
+    contexts = document_contexts(session, [f.document_id for f in findings if f.document_id])
+    sources = [
+        Source(
+            kind="finding",
+            text=f"Check '{f.rule_version.name}' ({f.rule_code}, version {f.rule_version.version}, {f.severity.value}): "
+            f"{f.status.value.replace('_', ' ')}. {f.message}",
+            context=contexts.get(f.document_id) if f.document_id else None,
+        )
+        for f in findings[:MAX_RECORDS]
+    ]
+    return sources, f"{len(findings)} open finding(s) in total on the documents and component asked about"
+
+
+def run_tool(session: Session, call: Any, scope: Scope) -> tuple[list[Source], str]:
+    if isinstance(call, DocumentsTool):
+        return run_documents(session, call, scope)
+    if isinstance(call, KeyAttributeTool):
+        return run_key_attribute(session, call, scope)
+    return run_findings(session, call, scope)
+
+def read_each_document(session: Session, question: str, topic: str, scope: Scope) -> tuple[list[Source], str]:
+    """Cross-document route: the documents in scope from the database, then each one's best passages.
+
+    No reranking here (it would be one extra GPT call per document); the
+    answer step and the grounding check still judge every passage.
+    """
+    ids = list(session.scalars(scoped_documents(scope)))
+    contexts = document_contexts(session, ids[:CROSS_DOCUMENT_LIMIT])
+    sources = []
+    for document_id, context in contexts.items():
+        sources.append(Source(kind="record", text=document_record(context), context=context))
+        filters = SearchFilters(document_ids=[document_id])
+        for hit in hybrid_search(session, f"{topic} {question}", filters, limit=PASSAGES_PER_DOCUMENT):
+            sources.append(Source(kind="passage", text=hit.chunk.content, context=context, page_start=hit.chunk.page_start,
+                                  page_end=hit.chunk.page_end, section=hit.chunk.section_name))
+    summary = f"{len(ids)} document(s) in scope" + (f"; the first {CROSS_DOCUMENT_LIMIT} were read" if len(ids) > CROSS_DOCUMENT_LIMIT else "")
+    return sources, summary
