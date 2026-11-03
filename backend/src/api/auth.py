@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel, ConfigDict, EmailStr
 from sqlalchemy.orm import Session
 
+from src.audit.trail import set_audit_reason
 from src.auth.accounts import AccountError, accept_invite, request_password_reset, reset_password
 from src.auth.dependencies import current_user, signing_in_session
 from src.auth.login import SignInError, sign_in, start_mfa_setup, verify_mfa_code
@@ -12,7 +13,7 @@ from src.auth.session import SESSION_COOKIE, end_session
 from src.config.database import get_session
 from src.config.settings import get_settings
 from src.models import User, UserSession
-from src.models.user import SessionEndReason, UserRole
+from src.models.user import DigestFrequency, SessionEndReason, UserRole
 
 # Public on purpose: these are the endpoints you use BEFORE you are signed in.
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -47,6 +48,12 @@ class MeOut(BaseModel):
     email: str
     full_name: str
     role: UserRole
+    digest_frequency: DigestFrequency
+
+
+class Preferences(BaseModel):
+    # Critical alerts and escalations are emailed at once regardless: they can't be switched off.
+    digest_frequency: DigestFrequency
 
 
 class NewPassword(BaseModel):
@@ -111,6 +118,15 @@ def mfa_verify(
 
 @router.get("/me", response_model=MeOut)
 def me(user: User = Depends(current_user)) -> User:
+    return user
+
+
+@router.put("/me/preferences", response_model=MeOut)
+def update_preferences(body: Preferences, user: User = Depends(current_user), session: Session = Depends(get_session)) -> User:
+    """How often you get the summary email of non-urgent alerts: daily, weekly (Mondays) or none."""
+    set_audit_reason(session, "Notification preference changed by the user.")
+    user.digest_frequency = body.digest_frequency
+    session.commit()
     return user
 
 

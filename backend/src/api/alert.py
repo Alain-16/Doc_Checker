@@ -12,7 +12,7 @@ from src.auth.dependencies import POLICY_EDITORS, confirm_signature_or_401, curr
 from src.review.policies import PolicyError, current_policies, save_policy_version
 from src.review.raising import refresh_alerts
 from src.config.database import get_session
-from src.models import Alert, AlertPolicy, User
+from src.models import Alert, AlertDelivery, AlertPolicy, User
 from src.models.alert import AlertEvent, AlertStatus, DeliveryChannel, DeliveryKind, DeliveryStatus
 from src.models.compliance import FindingSeverity
 from src.models.user import UserRole
@@ -115,7 +115,9 @@ def list_alerts(
     status_in: list[AlertStatus] = Query(default=LIVE_STATUSES, alias="status"),
     event: AlertEvent | None = None,
     severity: FindingSeverity | None = None,
+    mine: bool = Query(default=False, description="Only alerts I was notified about."),
     limit: int = Query(default=100, gt=0, le=MAX_PAGE_SIZE),
+    user: User = Depends(current_user),
     session: Session = Depends(get_session),
 ) -> list[Alert]:
 
@@ -124,6 +126,8 @@ def list_alerts(
         query = query.where(Alert.event == event)
     if severity:
         query = query.where(Alert.severity == severity)
+    if mine:
+        query = query.where(Alert.deliveries.any(AlertDelivery.recipient_id == user.id))
 
     return list(session.scalars(query.order_by(Alert.created_at.desc()).limit(limit)))
 

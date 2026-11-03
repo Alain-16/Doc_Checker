@@ -17,6 +17,11 @@ class LlmTask(StrEnum):
     IDENTIFY_VENDOR = "identify_vendor"
     LABEL_DATES = "label_dates"
     EXTRACT_KEY_ATTRIBUTES = "extract_key_attributes"
+    ROUTE_QUESTION = "route_question"
+    RERANK_PASSAGES = "rerank_passages"
+    CHOOSE_QUERY_TOOL = "choose_query_tool"
+    ANSWER_QUESTION = "answer_question"
+    CHECK_GROUNDING = "check_grounding"
 
 
 # Which model each task uses. The PRD leaves the final choice to the Feature 13
@@ -27,6 +32,19 @@ MODEL_BY_TASK: dict[LlmTask, str] = {
     LlmTask.IDENTIFY_VENDOR: "gpt-5",
     LlmTask.LABEL_DATES: "gpt-5",
     LlmTask.EXTRACT_KEY_ATTRIBUTES: "gpt-5",
+    LlmTask.ROUTE_QUESTION: "gpt-5",
+    LlmTask.RERANK_PASSAGES: "gpt-5",
+    LlmTask.CHOOSE_QUERY_TOOL: "gpt-5",
+    LlmTask.ANSWER_QUESTION: "gpt-5",
+    LlmTask.CHECK_GROUNDING: "gpt-5",
+}
+
+REASONING_EFFORT_BY_TASK: dict[LlmTask, str] = {
+    LlmTask.ROUTE_QUESTION: "minimal",
+    LlmTask.RERANK_PASSAGES: "minimal",
+    LlmTask.CHOOSE_QUERY_TOOL: "minimal",
+    LlmTask.ANSWER_QUESTION: "high",
+    LlmTask.CHECK_GROUNDING: "minimal",
 }
 
 
@@ -42,6 +60,7 @@ def structured_llm(task: LlmTask, schema: type[BaseModel]) -> Runnable:
         api_key=get_settings().openai_api_key,
         timeout=REQUEST_TIMEOUT_SECONDS,
         max_retries=MAX_RETRIES,
+        reasoning_effort= REASONING_EFFORT_BY_TASK.get(task),
     )
     return model.with_structured_output(schema, method="json_schema", strict=True)
 

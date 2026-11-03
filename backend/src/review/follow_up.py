@@ -3,14 +3,11 @@ from datetime import datetime, timedelta
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
+from src.review.notifications import notify
 from src.review.policies import current_policies
-from src.models import Alert, AlertDelivery
-from src.models.alert import AlertStatus, DeliveryChannel, DeliveryKind
+from src.models import Alert
+from src.models.alert import AlertStatus, DeliveryKind
 from src.models.compliance import FindingSeverity
-from src.models.user import UserRole
-
-
-ESCALATION_ROLE = UserRole.ADMIN
 
 
 def follow_up_alerts(session: Session, now: datetime) -> dict[str, int]:
@@ -34,15 +31,11 @@ def follow_up_alerts(session: Session, now: datetime) -> dict[str, int]:
         )
         if alert.escalated_at is None and now - alert.created_at >= timedelta(days=escalate_after):
             alert.escalated_at = now
-            alert.deliveries.append(
-                AlertDelivery(kind=DeliveryKind.ESCALATION, channel=DeliveryChannel.IN_APP, audience_role=ESCALATION_ROLE)
-            )
+            notify(session, alert, DeliveryKind.ESCALATION, now)
             counts["escalations"] += 1
         elif now - alert.last_notified_at >= timedelta(days=policy.reminder_days):
             alert.reminder_count += 1
             alert.last_notified_at = now
-            alert.deliveries.append(
-                AlertDelivery(kind=DeliveryKind.REMINDER, channel=DeliveryChannel.IN_APP, audience_role=alert.audience_role)
-            )
+            notify(session, alert, DeliveryKind.REMINDER, now)
             counts["reminders"] += 1
     return counts

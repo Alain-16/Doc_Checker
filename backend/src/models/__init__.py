@@ -7,13 +7,14 @@ from src.models.compliance import (
     KeyAttribute,
 )
 from src.models.document import Document, DocumentDate, DocumentType
-from src.models.vendor import Component, Vendor
+from src.models.vendor import Component, OwnerAssignment, Vendor
 from src.models.vendor_file import Page, VendorFile
 from .review import ReviewItem
 from .user import User, AccountToken, UserSession
 from .chunk import Chunk
 from .audit import AuditEvent, ElectronicSignature
 from .alert import Alert,AlertDelivery, AlertPolicy
+from .copilot import Conversation,Message,QueryLog
 __all__ = [
     "AuditEvent",
     "Alert",
@@ -33,10 +34,14 @@ __all__ = [
     "DocumentType",
     "ElectronicSignature",
     "KeyAttribute",
+    "OwnerAssignment",
     "Page",
     "ReviewItem",
     "User",
     "Vendor",
     "VendorFile",
+    "Conversation",
+    "Message",
+    "QueryLog",
 
 ]

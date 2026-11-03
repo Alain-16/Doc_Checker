@@ -67,6 +67,15 @@ class UserRole(StrEnum):
     ADMIN = "admin"
 
 
+class DigestFrequency(StrEnum):
+    """How often a user gets the summary email of non-urgent alerts (Alerts Phase B).
+    Critical alerts and escalations are always emailed at once, whatever this says."""
+
+    DAILY = "daily"
+    WEEKLY = "weekly"  # sent on Mondays
+    NONE = "none"  # in-app only
+
+
 class User(Base):
     """A person with an account. Never deleted, only deactivated, so every
     signature and audit entry keeps pointing at a real user."""
@@ -78,6 +87,7 @@ class User(Base):
         CheckConstraint("email = lower(email)", name="email_lowercase"),
         CheckConstraint("failed_login_count >= 0", name="failed_login_count_not_negative"),
         enum_check("role", UserRole),
+        enum_check("digest_frequency", DigestFrequency),
     )
 
     email: Mapped[str] = mapped_column(unique=True)
@@ -99,6 +109,9 @@ class User(Base):
     last_login_at: Mapped[datetime | None]
 
     is_active: Mapped[bool] = mapped_column(default=True, server_default=true())
+    digest_frequency: Mapped[DigestFrequency] = mapped_column(
+        string_enum(DigestFrequency), default=DigestFrequency.DAILY, server_default=DigestFrequency.DAILY.value
+    )
     # The Admin who sent the invite. Empty only for the very first Admin.
     invited_by_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("users.id", ondelete="RESTRICT")

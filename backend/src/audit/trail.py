@@ -15,7 +15,7 @@ from src.models.audit import ActorType, AuditAction
 REGULATED_TABLES = frozenset({
     "vendors", "components", "vendor_files", "pages", "documents", "document_dates",
     "document_attributes", "key_attributes", "compliance_rules", "compliance_rule_versions",
-    "compliance_findings", "alert_policies", "alerts", "review_items", "users",
+    "compliance_findings", "alert_policies", "alerts", "review_items", "users", "owner_assignments",
 })
 # Never copied into the audit trail, only noted as changed.
 SECRET_COLUMNS = frozenset({"password_hash", "mfa_secret_encrypted"})

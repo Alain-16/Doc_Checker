@@ -8,7 +8,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.models.base import EMPTY_JSONB, Base, enum_check, string_enum
 from src.models.compliance import FindingSeverity
-from src.models.user import UserRole
+from src.models.user import User, UserRole
 
 class AlertEvent(StrEnum):
     """What can raise an alert. Each has exactly one policy (alert_policies)."""
@@ -31,15 +31,18 @@ class DeliveryKind(StrEnum):
 
 
 class DeliveryChannel(StrEnum):
-    IN_APP = "in_app"
-    EMAIL = "email"  # Phase B
+    IN_APP = "in_app"  # the person's alert inbox: delivered the moment it is created
+    EMAIL = "email"  # sent at once: critical alerts and escalations
+    DIGEST = "digest"  # waits for the person's daily or weekly summary email
 
 
 class DeliveryStatus(StrEnum):
-    # Phase A has no users yet, so nothing can be sent: deliveries wait here.
-    PENDING = "pending"
+    PENDING = "pending"  # waiting for the sending job (email) or the digest
     SENT = "sent"
-    FAILED = "failed"
+    FAILED = "failed"  # gave up after MAX_SEND_ATTEMPTS; the error says why
+    # Nobody could be told: no owner and nobody active with the role, or raised
+    # before users existed (Phase A). Kept as evidence that it was noticed.
+    SKIPPED = "skipped"
 
 
 
@@ -154,8 +157,11 @@ class AlertDelivery(Base):
         string_enum(DeliveryStatus), default=DeliveryStatus.PENDING, server_default=DeliveryStatus.PENDING.value
     )
     sent_at: Mapped[datetime | None]
+    # Failed sending attempts so far; the sending job retries until the limit.
+    attempts: Mapped[int] = mapped_column(default=0, server_default=text("0"))
     error: Mapped[str | None] = mapped_column(Text)
 
     alert: Mapped[Alert] = relationship(back_populates="deliveries")
+    recipient: Mapped["User | None"] = relationship()
 
 

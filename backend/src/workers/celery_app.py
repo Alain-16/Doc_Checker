@@ -10,6 +10,8 @@ from src.config.database import engine
 PROCESS_VENDOR_FILE_TASK = "process_vendor_file"
 EVALUATE_ALL_COMPLIANCE_TASK = "evaluate_all_compliance"
 FOLLOW_UP_ALERTS_TASK = "follow_up_alerts"
+SEND_ALERT_EMAILS_TASK = "send_alert_emails"
+SEND_ALERT_DIGESTS_TASK = "send_alert_digests"
 
 celery_app = Celery(
     "doc_checker",
@@ -39,6 +41,16 @@ celery_app.conf.update(
         "hourly-alert-follow-up":{
             "task": FOLLOW_UP_ALERTS_TASK,
             "schedule": crontab(minute=15),
+        },
+        # Critical alerts and escalations: emailed within 5 minutes.
+        "alert-emails-every-5-minutes": {
+            "task": SEND_ALERT_EMAILS_TASK,
+            "schedule": crontab(minute="*/5"),
+        },
+        # The morning summary of everything else (weekly people: Mondays).
+        "daily-alert-digest": {
+            "task": SEND_ALERT_DIGESTS_TASK,
+            "schedule": crontab(hour=7, minute=0),  # 07:00 UTC
         },
     },
 )

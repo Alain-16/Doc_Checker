@@ -5,6 +5,7 @@ from typing import Any
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
+from src.review.notifications import notify
 from src.review.policies import (
     ComingDueParameters,
     FindingAlertParameters,
@@ -12,8 +13,8 @@ from src.review.policies import (
     current_policies,
     parameters_of,
 )
-from src.models import Alert, AlertDelivery, AlertPolicy, ComplianceFinding, Component, Document, ReviewItem, VendorFile
-from src.models.alert import AlertEvent, AlertStatus, DeliveryChannel, DeliveryKind
+from src.models import Alert, AlertPolicy, ComplianceFinding, Component, Document, ReviewItem, VendorFile
+from src.models.alert import AlertEvent, AlertStatus, DeliveryKind
 from src.models.compliance import FindingSeverity
 from src.models.document import ComplianceStatus
 from src.models.review import ReviewStatus
@@ -133,11 +134,8 @@ def sync_alerts(
             finding_id=draft.finding_id,
             last_notified_at=now,
         )
-        # The first notification. It waits as "pending" until there are users (Phase B).
-        alert.deliveries.append(
-            AlertDelivery(kind=DeliveryKind.INITIAL, channel=DeliveryChannel.IN_APP, audience_role=policy.audience_role)
-        )
         session.add(alert)
+        notify(session, alert, DeliveryKind.INITIAL, now)
 
 
 def refresh_alerts(session: Session, now: datetime) -> None:
