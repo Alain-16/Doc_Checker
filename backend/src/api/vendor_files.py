@@ -32,9 +32,9 @@ class ProcessingStatusOut(BaseModel):
     # Per-stage progress, e.g. {"read_pages": "completed", "segment": "running"}.
     stages: dict[str, Any]
     error: str | None
-    # Empty until the pipeline (or a reviewer) identifies the component.
-    component_id: uuid.UUID | None
-    superseded_by_id: uuid.UUID | None
+    # The components the file's documents were identified as (one bundle can
+    # hold several). Empty until the pipeline (or a reviewer) identifies them.
+    component_ids: list[uuid.UUID]
 
 
 def queue_processing(vendor_file_id: uuid.UUID) -> None:
@@ -83,8 +83,7 @@ def get_processing_status(
         status=vendor_file.processing_status,
         stages=vendor_file.processing_state.get("stages", {}),
         error=vendor_file.processing_state.get("error"),
-        component_id=vendor_file.component_id,
-        superseded_by_id=vendor_file.superseded_by_id,
+        component_ids=sorted({d.component_id for d in vendor_file.documents if d.component_id is not None}),
     )
 
 @router.post("/{vendor_file_id}/resume", response_model=UploadAccepted, status_code=status.HTTP_202_ACCEPTED)

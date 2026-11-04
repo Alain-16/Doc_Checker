@@ -6,7 +6,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from src.models import Component, Document, DocumentType, Vendor, VendorFile
+from src.models import Component, Document, DocumentType, Vendor
 from src.models.document import ComplianceStatus
 
 
@@ -54,15 +54,14 @@ class Source:
 def document_contexts(session: Session, document_ids: list[uuid.UUID]) -> dict[uuid.UUID, DocumentContext]:
     """Label and status of each document, read fresh (never copied onto chunks: they'd go stale)."""
     rows = session.execute(
-        select(Document, DocumentType.display_name, VendorFile.superseded_by_id, Vendor.name, Component.name)
-        .join(VendorFile, Document.vendor_file_id == VendorFile.id)
+        select(Document, DocumentType.display_name, Vendor.name, Component.name)
         .outerjoin(DocumentType, Document.document_type_id == DocumentType.id)
-        .outerjoin(Component, VendorFile.component_id == Component.id)
-        .outerjoin(Vendor, Component.vendor_id == Vendor.id)
+        .outerjoin(Component, Document.component_id == Component.id)
+        .outerjoin(Vendor, Document.vendor_id == Vendor.id)
         .where(Document.id.in_(document_ids))
     ).all()
     contexts = {}
-    for document, type_name, superseded_by, vendor, component in rows:
+    for document, type_name, vendor, component in rows:
         owner = " / ".join(name for name in (vendor, component) if name)
         contexts[document.id] = DocumentContext(
             document_id=document.id,
@@ -71,7 +70,7 @@ def document_contexts(session: Session, document_ids: list[uuid.UUID]) -> dict[u
             status=document.compliance_status,
             status_reason=document.status_reason,
             governing_date=document.governing_date,
-            superseded=superseded_by is not None,
+            superseded=document.superseded_by_id is not None,
         )
     return contexts
 

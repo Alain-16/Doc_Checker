@@ -12,7 +12,7 @@ from src.extraction.dates import extract_dates
 from src.extraction.key_attributes import extract_key_attributes
 from src.ingestion.page_reading import read_pages
 from src.ingestion.segmentation import segment_pages
-from src.ingestion.superseding import supersede_older_files
+from src.ingestion.superseding import supersede_older_documents
 from src.models import VendorFile
 from src.retrieval.indexing import chunk_documents, embed_chunks
 from src.vendors.identification import identify_vendor
@@ -32,12 +32,14 @@ STAGES: list[tuple[str, StageFunction]] = [
     ("segment", segment_pages),
     ("classify", classify_documents),
     ("identify_vendor", identify_vendor),
-    ("supersede", supersede_older_files),
     # Before extraction: priority key attributes are found by searching this index.
     ("chunk", chunk_documents),
     ("embed", embed_chunks),
     ("extract_dates", extract_dates),
     ("extract_key_attributes", extract_key_attributes),
+    # After extraction: the items a document covers tell versions of one
+    # document apart from same-type documents about other items.
+    ("supersede", supersede_older_documents),
     ("evaluate_compliance", evaluate_compliance),
 ]
 

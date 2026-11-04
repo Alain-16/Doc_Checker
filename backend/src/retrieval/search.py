@@ -7,7 +7,7 @@ from sqlalchemy import Select, Text, cast, func, select
 from sqlalchemy.orm import Session
 
 from src.llm.models import embedding_model
-from src.models import Chunk, Component, Document, DocumentType, VendorFile
+from src.models import Chunk, Document, DocumentType
 from src.models.chunk import SEARCH_TEXT_CONFIG
 
 # Each search method returns this many candidates before they are fused.
@@ -55,28 +55,26 @@ class SearchHit:
 
 
 def filtered(query: Select, filters: SearchFilters) -> Select:
-    """Restrict a chunk query by joining chunk -> document -> vendor_file.
+    """Restrict a chunk query by joining chunk -> document.
 
     Vendor, component, type and superseded flag are never copied onto chunks
     (your decision, 2026-10-23); they are read here, so they are always current.
+    They live on the document: one bundle can hold several vendors' documents.
     """
-    query = query.join(Document, Chunk.document_id == Document.id).join(
-        VendorFile, Document.vendor_file_id == VendorFile.id
-    )
+    query = query.join(Document, Chunk.document_id == Document.id)
     if filters.document_ids:
         query = query.where(Document.id.in_(filters.document_ids))
     if filters.component_ids:
-        query = query.where(VendorFile.component_id.in_(filters.component_ids))
+        query = query.where(Document.component_id.in_(filters.component_ids))
     if filters.vendor_ids:
-        query = query.join(Component, VendorFile.component_id == Component.id).where(
-            Component.vendor_id.in_(filters.vendor_ids)
-        )
+        # documents.vendor_id: also finds company-level documents (no component).
+        query = query.where(Document.vendor_id.in_(filters.vendor_ids))
     if filters.document_type_names:
         query = query.join(DocumentType, Document.document_type_id == DocumentType.id).where(
             DocumentType.name.in_(filters.document_type_names)
         )
     if not filters.include_superseded:
-        query = query.where(VendorFile.superseded_by_id.is_(None))
+        query = query.where(Document.superseded_by_id.is_(None))
     return query
 
 

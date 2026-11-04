@@ -3,22 +3,26 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from src.copilot.source import Source, sources_for_prompt
+from src.industry.profile import Profile
 from src.llm.models import LlmTask, structured_llm
 from src.models.document import ComplianceStatus
 
 NOT_FOUND = "I couldn't find this in the documentation."
-OUT_OF_SCOPE = (
-    "I can only answer from your organisation's vendor documentation and the compliance checks run on it. "
-    "Regulatory opinions and compliance decisions are for a qualified person; I can point to the evidence."
-)
+def out_of_scope_message(profile: Profile) -> str:
+    return (
+        f"I can only answer from your organisation's {profile.vendor_label.lower()} documentation and the "
+        "compliance checks run on it. Regulatory opinions and compliance decisions are for a qualified "
+        "person; I can point to the evidence."
+    )
 
-ANSWER_PROMPT = """You answer questions for a pharmaceutical QA team using ONLY the numbered sources given.
+ANSWER_PROMPT = """You answer questions for a quality and compliance team using ONLY the numbered sources given.
+{profile}
 Rules:
 - Every claim cites the source numbers it comes from. A claim without a source must not be written.
 - Use nothing but the sources: no general knowledge, no assumptions, no regulatory opinion or decision.
 - If the sources don't answer the question, return no claims and not_found = true.
   A database count of 0 IS an answer ("none"), not "not found".
-- Quote values exactly as the sources give them (numbers, dates, lot numbers).
+- Quote values exactly as the sources give them (numbers, dates, lot, batch or reference numbers).
 - Be short and plain: explain findings and records in your own words; never paste them whole.
 - One claim per point, as one full sentence (related details from the same source belong together).
   If several sources say the same thing, write it once and cite them all.
@@ -55,7 +59,7 @@ class GroundingCheck(BaseModel):
     checks: list[ClaimCheck]
 
 
-def draft_answer(question: str, sources: list[Source], cover: list[str] | None = None) -> DraftAnswer:
+def draft_answer(question: str, sources: list[Source], profile: Profile, cover: list[str] | None = None) -> DraftAnswer:
     """`cover`: documents the answer must address one by one (the cross-document route).
     Measured: told only "cover every document", the model answered for 1 of 3."""
     must_cover = ""
@@ -65,7 +69,7 @@ def draft_answer(question: str, sources: list[Source], cover: list[str] | None =
             "address the question:\n" + "\n".join(f"- {label}" for label in cover)
         )
     return structured_llm(LlmTask.ANSWER_QUESTION, DraftAnswer).invoke([
-        ("system", ANSWER_PROMPT),
+        ("system", ANSWER_PROMPT.format(profile=profile.context())),
         ("human", f"Question: {question}{must_cover}\n<sources>\n{sources_for_prompt(sources)}\n</sources>"),
     ])
 
@@ -112,25 +116,25 @@ STATUS_NOTES = {
 }
 
 
-def source_line(source: Source) -> str:
+def source_line(source: Source, profile: Profile) -> str:
     """One entry of the source list: where it is, and how far it can be trusted today."""
     context = source.context
     if source.kind == "summary":
         return f"[{source.number}] Database query: {source.text}"
     if context is None:
-        return f"[{source.number}] Component-level compliance check"
+        return f"[{source.number}] {profile.component_label}-level compliance check"
     pages = ""
     if source.page_start:
         pages = f", page {source.page_start}" + (f"-{source.page_end}" if source.page_end != source.page_start else "")
     line = f"[{source.number}] {context.label}{pages} — {STATUS_NOTES[context.status]}"
     if context.superseded:
-        line += " — SUPERSEDED by a newer file"
+        line += " — SUPERSEDED by a newer version"
     if context.status == ComplianceStatus.STALE:
-        line += f". {context.status_reason or ''} Consider requesting an updated document from the vendor."
+        line += f". {context.status_reason or ''} Consider requesting an updated document from the {profile.vendor_label.lower()}."
     return line
 
 
-def compose(claims: list[Claim], sources: list[Source], notes: list[str]) -> tuple[str, list[Source]]:
+def compose(claims: list[Claim], sources: list[Source], notes: list[str], profile: Profile) -> tuple[str, list[Source]]:
     """The final text, and only the sources it actually cites (renumbered 1, 2, 3...)."""
     used = sorted({n for claim in claims for n in claim.sources})
     renumber = {old: new for new, old in enumerate(used, start=1)}
@@ -141,5 +145,5 @@ def compose(claims: list[Claim], sources: list[Source], notes: list[str]) -> tup
         source.number = renumber[old]
         cited.append(source)
     sentences = " ".join(f"{c.text} [{', '.join(str(renumber[n]) for n in c.sources)}]" for c in claims)
-    text = "\n".join([*notes, sentences, "", "Sources:", *(source_line(s) for s in cited)])
+    text = "\n".join([*notes, sentences, "", "Sources:", *(source_line(s, profile) for s in cited)])
     return text.strip(), cited

@@ -70,9 +70,9 @@ class ComponentDocument:
 @dataclass(frozen=True)
 class ComponentFacts:
     name: str
-    # Documents of the component's current file (status already evaluated).
+    # The component's current (not superseded) documents, status already evaluated.
     current_documents: list[ComponentDocument]
-    # Document type name -> label, for types found only in superseded files.
+    # Document type name -> label, for types found only among superseded documents.
     superseded_types: dict[str, str]
     document_type_labels: dict[str, str]  # every known type, for messages
 
@@ -123,10 +123,45 @@ class DocumentAgeParameters(RuleParameters):
     warning_months: int = Field(
         default=6, ge=0, description="How long before the threshold it becomes 'approaching review'."
     )
+    use_stated_expiry: bool = Field(
+        default=False,
+        description="When the document states its OWN expiry ('valid until'), judge it by that date "
+        "instead of its age: stale once expired, approaching review within warning_months of it. "
+        "Certificates, permits and licences carry one in every industry.",
+    )
+
+
+def check_stated_expiry(facts: DocumentFacts, parameters: DocumentAgeParameters, today: date) -> Outcome | None:
+    """Judged by the document's own expiry date, or None when it states none."""
+    expiries = [f for f in facts.dates if f.date_type == DateType.EXPIRY and f.is_document_date]
+    if not expiries:
+        return None
+    expiry = max(expiries, key=lambda fact: fact.value)
+    warn_from = add_months(expiry.value, -parameters.warning_months)
+    evidence = {
+        "date_type": expiry.date_type.value,
+        "date": expiry.value.isoformat(),
+        "original_text": expiry.original_text,
+        "page": expiry.page_number,
+        # Read by the "coming due" alerts, as for an age-based due date.
+        "review_due": expiry.value.isoformat(),
+    }
+    since = f"Valid until {expiry.value:%d-%b-%Y} (page {expiry.page_number})"
+    if today >= expiry.value:
+        status, message = ComplianceStatus.STALE, f"{since}: the document has expired."
+    elif today >= warn_from:
+        status, message = ComplianceStatus.APPROACHING_REVIEW, f"{since}: expires within {parameters.warning_months} months."
+    else:
+        status, message = ComplianceStatus.CURRENT, f"{since}: in force."
+    return Outcome(status, message, governing_date=expiry.value, evidence=evidence)
 
 
 def check_document_age(facts: DocumentFacts, parameters: DocumentAgeParameters, today: date) -> Outcome:
     """Current / approaching review / stale, from the governing date (always returns an outcome)."""
+    if parameters.use_stated_expiry:
+        by_expiry = check_stated_expiry(facts, parameters, today)
+        if by_expiry is not None:
+            return by_expiry
     candidates = [
         fact
         for fact in facts.dates
@@ -335,7 +370,12 @@ class RevisionWithoutReplacementParameters(RuleParameters):
 def check_revision_without_replacement(
     facts: ComponentFacts, parameters: RevisionWithoutReplacementParameters, today: date
 ) -> Outcome | None:
-    """A type in an older (superseded) file that the current file no longer has."""
+    """A type found only in superseded documents: no current document of that type remains.
+
+    With per-document superseding a replaced document always has a current
+    successor of its type, so this fires only if that successor was itself
+    reclassified or reassigned to another component.
+    """
     current_types = {document.document_type for document in facts.current_documents}
     dropped = [
         label_
@@ -346,7 +386,7 @@ def check_revision_without_replacement(
         return None
     return Outcome(
         ComplianceStatus.NEEDS_REVIEW,
-        f"{facts.name}: an older {', '.join(dropped)} exists, but the current file has no replacement.",
+        f"{facts.name}: an older {', '.join(dropped)} exists, but no current document replaces it.",
         evidence={"document_types": dropped},
     )
 

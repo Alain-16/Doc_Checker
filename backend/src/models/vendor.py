@@ -9,7 +9,7 @@ from .base import Base, EMPTY_TEXT_ARRAY
 
 if TYPE_CHECKING:
     from src.models.user import User
-    from src.models.vendor_file import VendorFile
+    from src.models.document import Document
     
     
 
@@ -40,7 +40,7 @@ class Component(Base):
     description: Mapped[str | None]
     aliases: Mapped[list[str]] = mapped_column(default=list, server_default=EMPTY_TEXT_ARRAY)
     vendor: Mapped[Vendor] = relationship(back_populates="components")
-    vendor_files: Mapped[list["VendorFile"]] = relationship(back_populates="component")
+    documents: Mapped[list["Document"]] = relationship(back_populates="component")
     
 
 

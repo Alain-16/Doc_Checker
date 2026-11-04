@@ -16,6 +16,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from src.config.settings import get_settings
+from src.industry.profile import current_profile
 from src.llm.models import LlmTask, embedding_model, structured_llm
 from src.models import Chunk, Document, DocumentAttribute, DocumentDate, KeyAttribute, Page, ReviewItem, VendorFile
 from src.models.compliance import AttributeGroup, AttributeValueType
@@ -47,7 +48,8 @@ MAX_PARALLEL_GPT_CALLS = 8
 DOCUMENT_COLUMNS = ("title", "document_number", "revision")
 
 SYSTEM_PROMPT = (
-    "You fill in specific fields from pharmaceutical vendor documents for quality assurance.\n"
+    "You fill in specific fields from compliance documents for quality assurance.\n"
+    "{profile}\n"
     "Rules:\n"
     "- Use only what the text states. Never fill a field from outside knowledge or by guessing.\n"
     "- If the text doesn't give a field, return null for it.\n"
@@ -183,7 +185,7 @@ def answers_model(attributes: list[KeyAttribute]) -> type[BaseModel]:
     )
 
 
-def ask_gpt(document_kind: str, attributes: list[KeyAttribute], text: str) -> dict[str, Any]:
+def ask_gpt(document_kind: str, attributes: list[KeyAttribute], text: str, profile_context: str) -> dict[str, Any]:
     """GPT's answer for each attribute (None where it found nothing).
 
     Runs in worker threads, so it gets plain values, never the session or
@@ -193,7 +195,7 @@ def ask_gpt(document_kind: str, attributes: list[KeyAttribute], text: str) -> di
         return {}
     llm = structured_llm(LlmTask.EXTRACT_KEY_ATTRIBUTES, answers_model(attributes))
     result = llm.invoke(
-        [("system", SYSTEM_PROMPT), ("human", f"Document type: {document_kind}\n<document>\n{text}\n</document>")]
+        [("system", SYSTEM_PROMPT.format(profile=profile_context)), ("human", f"Document type: {document_kind}\n<document>\n{text}\n</document>")]
     )
     return {attribute.name: getattr(result, attribute.name) for attribute in attributes}
 
@@ -379,13 +381,15 @@ def extract_key_attributes(session: Session, vendor_file: VendorFile) -> None:
     vectors = dict(zip(queries, embedding_model().embed_documents(queries), strict=True)) if queries else {}
 
     jobs = [prepare_job(session, document, pages, vectors) for document in documents]
+    # A plain string: the worker threads must not touch the session.
+    profile_context = current_profile(session).context()
 
     # Step 2: every GPT call of every document, in parallel. Leaving the `with`
     # waits for all of them; .result() re-raises a failed call's error, which
     # fails the stage and rolls everything back, as for any other stage.
     with ThreadPoolExecutor(max_workers=MAX_PARALLEL_GPT_CALLS) as pool:
         futures = [
-            (job, pool.submit(ask_gpt, job.document_kind, attributes, text))
+            (job, pool.submit(ask_gpt, job.document_kind, attributes, text, profile_context))
             for job in jobs
             for attributes, text in job.calls
         ]

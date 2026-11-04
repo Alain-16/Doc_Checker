@@ -1,5 +1,4 @@
 import uuid
-from datetime import datetime
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
@@ -10,7 +9,6 @@ from src.models.base import EMPTY_JSONB, Base, enum_check, string_enum
 
 if TYPE_CHECKING:
     from src.models.document import Document
-    from src.models.vendor import Component
 
 # Length of a SHA-256 hash written as hexadecimal text.
 SHA256_HEX_LENGTH = 64
@@ -38,24 +36,13 @@ class VendorFile(Base):
     __tablename__ = "vendor_files"
     __table_args__ = (
         # The same bytes uploaded twice = duplicate (Feature 1). Checked across ALL
-        # files, because the component isn't known until the pipeline identifies it.
+        # files: vendors and components are only known per document, after processing.
         UniqueConstraint("file_hash"),
         CheckConstraint("file_size_bytes > 0", name="file_size_positive"),
         CheckConstraint("page_count >= 1", name="page_count_positive"),
-        # Either the file is current (both empty) or superseded (both filled in).
-        CheckConstraint(
-            "(superseded_by_id IS NULL) = (superseded_at IS NULL)",
-            name="superseded_fields_together",
-        ),
-        CheckConstraint("superseded_by_id <> id", name="not_superseded_by_itself"),
         enum_check("processing_status", ProcessingStatus),
     )
 
-    # Empty from upload until the pipeline identifies the vendor and component
-    # (or a reviewer does, when identification was uncertain).
-    component_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("components.id", ondelete="RESTRICT"), index=True
-    )
     filename: Mapped[str]
     # Where the original PDF is stored in S3/object storage. Never the PDF bytes.
     storage_key: Mapped[str] = mapped_column(unique=True)
@@ -75,20 +62,6 @@ class VendorFile(Base):
         default=dict, server_default=EMPTY_JSONB
     )
 
-    # Points to the newer file that replaced this one. The old row is never
-    # deleted or overwritten, so auditors can see what was on file and when.
-    superseded_by_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("vendor_files.id", ondelete="RESTRICT")
-    )
-    superseded_at: Mapped[datetime | None]
-
-    # How the vendor and component were identified: names as written, page,
-    # snippet, method, confidence. Kept so the link can be explained to an auditor.
-    identification_evidence: Mapped[dict[str, Any]] = mapped_column(
-        default=dict, server_default=EMPTY_JSONB
-    )
-
-    component: Mapped["Component | None"] = relationship(back_populates="vendor_files")
     pages: Mapped[list["Page"]] = relationship(back_populates="vendor_file")
     documents: Mapped[list["Document"]] = relationship(back_populates="vendor_file")
 

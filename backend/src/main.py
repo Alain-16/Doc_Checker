@@ -1,5 +1,5 @@
 from fastapi import FastAPI
-from .api import alert, auth, compliance_rules, owners, users, vendor_files, vendors, copilot
+from .api import alert, auth, compliance_rules, industry_profile, owners, users, vendor_files, vendors, copilot
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -28,5 +28,6 @@ app.include_router(alert.router)
 app.include_router(users.router)
 app.include_router(auth.router)
 app.include_router(owners.router)
+app.include_router(industry_profile.router)
 app.include_router(copilot.router)
 

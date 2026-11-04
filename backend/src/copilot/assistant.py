@@ -6,7 +6,8 @@ from langchain_core.runnables import RunnableConfig
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from src.copilot.answers import NOT_FOUND, OUT_OF_SCOPE, Claim, check_grounding, compose, draft_answer
+from src.industry.profile import current_profile
+from src.copilot.answers import NOT_FOUND, Claim, check_grounding, compose, draft_answer, out_of_scope_message
 from src.copilot.content_search import find_passages
 from src.copilot.database_tools import FindingsTool, choose_tool, read_each_document, run_findings, run_tool
 from src.copilot.source import Source, number_sources, stored_sources
@@ -51,7 +52,7 @@ def db(config: RunnableConfig) -> Session:
 def understand(state: AnswerState, config: RunnableConfig) -> AnswerState:
     session = db(config)
     types = dict(session.execute(select(DocumentType.name, DocumentType.display_name)).tuples().all())
-    plan = plan_question(state["question"], state["history"], types)
+    plan = plan_question(state["question"], state["history"], types, current_profile(session))
     scope = resolve_scope(session, plan)
     notes = [f"I have no documents from a vendor or component called '{name}'." for name in scope.unmatched]
     if scope.searched_as_topic:
@@ -112,16 +113,18 @@ def answer(state: AnswerState, config: RunnableConfig) -> AnswerState:
     cover = None
     if state["plan"].route == "cross_document":
         cover = list(dict.fromkeys(s.context.label for s in sources if s.kind == "record" and s.context))
-    draft = draft_answer(question, sources, cover)
+    profile = current_profile(db(config))
+    draft = draft_answer(question, sources, profile, cover)
     kept, removed = check_grounding(draft.claims, sources) if not draft.not_found else ([], [])
     if not kept:
         return {"answer": "\n".join([*state["notes"], NOT_FOUND]), "cited": [], "claims": [], "removed": removed, "not_found": True}
-    text, cited = compose(kept, sources, state["notes"])
+    text, cited = compose(kept, sources, state["notes"], profile)
     return {"answer": text, "cited": cited, "claims": kept, "removed": removed, "not_found": False}
 
 
 def out_of_scope(state: AnswerState, config: RunnableConfig) -> AnswerState:
-    return {"answer": OUT_OF_SCOPE, "cited": [], "claims": [], "removed": [], "not_found": False, "sources": []}
+    message = out_of_scope_message(current_profile(db(config)))
+    return {"answer": message, "cited": [], "claims": [], "removed": [], "not_found": False, "sources": []}
 
 
 def build_graph():

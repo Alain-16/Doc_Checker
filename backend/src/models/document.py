@@ -3,13 +3,14 @@ from datetime import date, datetime
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import CheckConstraint, ForeignKey, Text, UniqueConstraint, false
+from sqlalchemy import CheckConstraint, ForeignKey, Text, UniqueConstraint, false, true
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.models.base import EMPTY_JSONB, EMPTY_TEXT_ARRAY, Base, enum_check, string_enum
 
 if TYPE_CHECKING:
     from src.models.compliance import ComplianceFinding, DocumentAttribute
+    from src.models.vendor import Component, Vendor
     from src.models.vendor_file import VendorFile
 
 
@@ -65,6 +66,10 @@ class DocumentType(Base):
         server_default=DocumentTypeOrigin.DISCOVERED.value,
     )
     aliases: Mapped[list[str]] = mapped_column(default=list, server_default=EMPTY_TEXT_ARRAY)
+    # Only active types are offered to the classifier. Retired, never deleted:
+    # documents and rule history still point at them. A retired type comes back
+    # when the classifier proposes it again from a real document.
+    active: Mapped[bool] = mapped_column(default=True, server_default=true())
     documents: Mapped[list["Document"]] = relationship(back_populates="document_type")
 
 
@@ -86,11 +91,44 @@ class Document(Base):
         ),
         enum_check("classification_method", ResultMethod),
         enum_check("compliance_status", ComplianceStatus),
+        # Either the document is current (both empty) or superseded (both filled in).
+        CheckConstraint(
+            "(superseded_by_id IS NULL) = (superseded_at IS NULL)",
+            name="superseded_fields_together",
+        ),
+        CheckConstraint("superseded_by_id <> id", name="not_superseded_by_itself"),
+        # A component is always some vendor's: no component without its vendor.
+        CheckConstraint("component_id IS NULL OR vendor_id IS NOT NULL", name="component_has_vendor"),
     )
 
     vendor_file_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("vendor_files.id", ondelete="RESTRICT")
     )
+
+    # --- Vendor and component (identify stage) ---
+    # Per document, not per file: one bundle can hold documents of several
+    # vendors and components. Empty until identified (or a reviewer decides).
+    # A company-level document (quality-system certificate, insurance, licence)
+    # has a vendor and no component.
+    vendor_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("vendors.id", ondelete="RESTRICT"), index=True
+    )
+    component_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("components.id", ondelete="RESTRICT"), index=True
+    )
+    # How the vendor and component were identified: names as written, page,
+    # snippet, method, confidence. Kept so the link can be explained to an auditor.
+    identification_evidence: Mapped[dict[str, Any]] = mapped_column(
+        default=dict, server_default=EMPTY_JSONB
+    )
+
+    # --- Superseding ---
+    # The newer document (same component, type and number) that replaced this one.
+    # The old row is never deleted, so auditors can see what was on file and when.
+    superseded_by_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("documents.id", ondelete="RESTRICT"), index=True
+    )
+    superseded_at: Mapped[datetime | None]
 
     # --- Segmentation (Feature 3) ---
     start_page: Mapped[int]
@@ -135,6 +173,8 @@ class Document(Base):
     )
 
     vendor_file: Mapped["VendorFile"] = relationship(back_populates="documents")
+    vendor: Mapped["Vendor | None"] = relationship()
+    component: Mapped["Component | None"] = relationship(back_populates="documents")
     document_type: Mapped[DocumentType | None] = relationship(back_populates="documents")
     dates: Mapped[list["DocumentDate"]] = relationship(back_populates="document")
     attributes: Mapped[list["DocumentAttribute"]] = relationship(back_populates="document")

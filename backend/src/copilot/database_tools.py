@@ -17,7 +17,6 @@ from src.models import (
     DocumentAttribute,
     DocumentType,
     KeyAttribute,
-    VendorFile,
 )
 from src.models.document import ComplianceStatus
 from src.retrieval.search import SearchFilters, hybrid_search
@@ -93,17 +92,17 @@ def choose_tool(session: Session, question: str) -> DocumentsTool | KeyAttribute
 
 def scoped_documents(scope: Scope, include_superseded: bool = False) -> Select:
     """Documents in the question's scope (vendor, component, type)."""
-    query = select(Document.id).join(VendorFile, Document.vendor_file_id == VendorFile.id)
+    query = select(Document.id)
     if scope.component_ids:
-        query = query.where(VendorFile.component_id.in_(scope.component_ids))
+        query = query.where(Document.component_id.in_(scope.component_ids))
     if scope.vendor_ids:
-        query = query.join(Component, VendorFile.component_id == Component.id).where(Component.vendor_id.in_(scope.vendor_ids))
+        query = query.where(Document.vendor_id.in_(scope.vendor_ids))
     if scope.document_type_names:
         query = query.join(DocumentType, Document.document_type_id == DocumentType.id).where(
             DocumentType.name.in_(scope.document_type_names)
         )
     if not include_superseded:
-        query = query.where(VendorFile.superseded_by_id.is_(None))
+        query = query.where(Document.superseded_by_id.is_(None))
     return query
 
 

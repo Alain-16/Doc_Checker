@@ -14,6 +14,7 @@ EMBEDDING_MODEL = "text-embedding-3-large"
 
 class LlmTask(StrEnum):
     CLASSIFY_DOCUMENT = "classify_document"
+    CHECK_BOUNDARIES = "check_boundaries"
     IDENTIFY_VENDOR = "identify_vendor"
     LABEL_DATES = "label_dates"
     EXTRACT_KEY_ATTRIBUTES = "extract_key_attributes"
@@ -29,6 +30,7 @@ class LlmTask(StrEnum):
 # All are narrow tasks on a few pages of text, so they start on the small tier.
 MODEL_BY_TASK: dict[LlmTask, str] = {
     LlmTask.CLASSIFY_DOCUMENT: "gpt-5",
+    LlmTask.CHECK_BOUNDARIES: "gpt-5",
     LlmTask.IDENTIFY_VENDOR: "gpt-5",
     LlmTask.LABEL_DATES: "gpt-5",
     LlmTask.EXTRACT_KEY_ATTRIBUTES: "gpt-5",
@@ -40,6 +42,8 @@ MODEL_BY_TASK: dict[LlmTask, str] = {
 }
 
 REASONING_EFFORT_BY_TASK: dict[LlmTask, str] = {
+    # Short page excerpts, one yes/no per boundary: no long reasoning needed.
+    LlmTask.CHECK_BOUNDARIES: "low",
     LlmTask.ROUTE_QUESTION: "minimal",
     LlmTask.RERANK_PASSAGES: "minimal",
     LlmTask.CHOOSE_QUERY_TOOL: "minimal",

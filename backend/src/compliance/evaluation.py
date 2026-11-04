@@ -41,8 +41,8 @@ from src.models.document import ComplianceStatus
 from src.models.review import ReviewStatus
 from src.models.vendor_file import ProcessingStatus
 
-# Shown on a document whose file a newer upload replaced (it is no longer judged).
-SUPERSEDED_REASON = "Replaced by a newer file for this component; no longer evaluated."
+# Shown on a document a newer version replaced (it is no longer judged).
+SUPERSEDED_REASON = "Replaced by a newer version of this document; no longer evaluated."
 # The worst finding decides a document's status.
 STATUS_SEVERITY = {
     ComplianceStatus.CURRENT: 0,
@@ -130,16 +130,15 @@ def document_facts(session: Session, document: Document) -> DocumentFacts:
 
 def component_facts(session: Session, component: Component) -> ComponentFacts:
     labels = dict(session.execute(select(DocumentType.name, DocumentType.display_name)).all())
-    rows = session.execute(
-        select(Document, VendorFile.superseded_by_id)
-        .join(VendorFile, Document.vendor_file_id == VendorFile.id)
-        .where(VendorFile.component_id == component.id)
+    documents = session.scalars(
+        select(Document)
+        .where(Document.component_id == component.id)
         .options(selectinload(Document.document_type))
     ).all()
     current, superseded_types = [], {}
-    for document, superseded_by_id in rows:
+    for document in documents:
         type_name = document.document_type.name if document.document_type else "unknown"
-        if superseded_by_id is None:
+        if document.superseded_by_id is None:
             current.append(ComponentDocument(type_name, labels.get(type_name, type_name), document.compliance_status, document.title))
         else:
             superseded_types[type_name] = labels.get(type_name, type_name)
@@ -215,8 +214,8 @@ def record_outcomes(
 
 
 def evaluate_document(session: Session, document: Document, rules: list[ActiveRule], today: date, now: datetime) -> None:
-    if document.vendor_file.superseded_by_id is not None:
-        # A newer file replaced this one: its problems are no longer anyone's to
+    if document.superseded_by_id is not None:
+        # A newer version replaced this one: its problems are no longer anyone's to
         # fix. Resolving its open findings closes their alerts; the resolved
         # findings stay as history ("this bulletin was stale before it was replaced").
         record_outcomes(session, {"document_id": document.id}, [], now)
@@ -267,28 +266,30 @@ def evaluate(session: Session, documents: list[Document], components: list[Compo
 
 
 def evaluate_compliance(session: Session, vendor_file: VendorFile) -> None:
-    """Pipeline stage: judge the component's documents (all its files), then the component.
+    """Pipeline stage: judge this file's documents, every other document of the
+    components they belong to, then those components.
 
-    All files, not just this one: if this upload superseded an older file, the
-    older file's findings must resolve now, in the same run, not stay open.
+    All the components' documents, not just this file's: if a document here
+    superseded an older one, the older one's findings must resolve now, in the
+    same run, not stay open.
     """
-    if vendor_file.component_id is None:
-        # Component still waiting for review: only this file can be judged.
-        documents = session.scalars(select(Document).where(Document.vendor_file_id == vendor_file.id)).all()
-        evaluate(session, list(documents), [])
-        return
+    own_documents = session.scalars(select(Document).where(Document.vendor_file_id == vendor_file.id)).all()
+    # Documents still waiting for identification have no component: only they are judged.
+    component_ids = {d.component_id for d in own_documents if d.component_id is not None}
 
-    documents = session.scalars(
+    other_documents = session.scalars(
         select(Document)
         .join(VendorFile, Document.vendor_file_id == VendorFile.id)
         .where(
-            VendorFile.component_id == vendor_file.component_id,
+            Document.component_id.in_(component_ids),
+            VendorFile.id != vendor_file.id,
             # This file is still "running" (this is its last stage); the others
             # must have finished processing.
-            or_(VendorFile.id == vendor_file.id, VendorFile.processing_status == ProcessingStatus.COMPLETED),
+            VendorFile.processing_status == ProcessingStatus.COMPLETED,
         )
-    ).all()
-    evaluate(session, list(documents), [session.get(Component, vendor_file.component_id)])
+    ).all() if component_ids else []
+    components = [session.get(Component, component_id) for component_id in sorted(component_ids)]
+    evaluate(session, [*own_documents, *other_documents], components)
 
 
 def evaluate_everything(session: Session) -> int:

@@ -15,6 +15,7 @@ from .chunk import Chunk
 from .audit import AuditEvent, ElectronicSignature
 from .alert import Alert,AlertDelivery, AlertPolicy
 from .copilot import Conversation,Message,QueryLog
+from .industry import IndustryProfile
 __all__ = [
     "AuditEvent",
     "Alert",
@@ -33,6 +34,7 @@ __all__ = [
     "DocumentDate",
     "DocumentType",
     "ElectronicSignature",
+    "IndustryProfile",
     "KeyAttribute",
     "OwnerAssignment",
     "Page",
