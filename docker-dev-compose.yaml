@@ -49,6 +49,47 @@ services:
       timeout: 5s
       retries: 10
 
+  # Celery worker: processes uploaded vendor files (the whole pipeline), re-evaluates
+  # compliance after rule changes, reads documents for new key attributes, sends alerts.
+  # The API (run on your machine) queues jobs in the same Redis; this picks them up.
+  worker:
+    build: ./backend
+    image: doc-checker-backend
+    command: celery -A src.workers.celery_app:celery_app worker --loglevel=INFO --concurrency=${WORKER_CONCURRENCY:-2}
+    env_file: .env
+    environment: &backend-services
+      # Inside the compose network the services are reached by name, not localhost.
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      REDIS_URL: redis://redis:6379/0
+      S3_ENDPOINT_URL: http://object-storage:8333
+    volumes:
+      # Your code, live: restart the worker after changing it (`docker compose ... restart worker`).
+      - ./backend/src:/app/src:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      object-storage:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # Celery Beat: queues the scheduled jobs (nightly re-evaluation at 02:00 UTC,
+  # hourly alert follow-up, alert emails every 5 minutes, daily digest at 07:00 UTC).
+  beat:
+    image: doc-checker-backend
+    command: celery -A src.workers.celery_app:celery_app beat --loglevel=INFO --schedule=/tmp/celerybeat-schedule
+    env_file: .env
+    environment: *backend-services
+    volumes:
+      - ./backend/src:/app/src:ro
+    depends_on:
+      redis:
+        condition: service_healthy
+      worker:
+        condition: service_started
+    restart: unless-stopped
+
 volumes:
   postgres_data:
   redis_data:

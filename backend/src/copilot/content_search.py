@@ -65,12 +65,17 @@ def relaxation_steps(scope: Scope) -> list[tuple[str, SearchFilters]]:
     return steps
 
 
-def find_passages(session: Session, question: str, topic: str, scope: Scope) -> tuple[list[Source], str, list[dict[str, Any]]]:
-    """Passages for the answer, how far the search had to be broadened, and the log of candidates."""
+def find_passages(
+    session: Session, question: str, topic: str, scope: Scope, search: str | None = None
+) -> tuple[list[Source], str, list[dict[str, Any]]]:
+    """Passages for the answer, how far the search had to be broadened, and the log of candidates.
+
+    `search` is the text to search for (see understanding.search_query); the reranker
+    still judges passages against the full question."""
     log: list[dict[str, Any]] = []
     for broadened, filters in relaxation_steps(scope):
         # The topic phrase finds the right section; the question adds its exact words.
-        hits = hybrid_search(session, f"{topic} {question}", filters, limit=CANDIDATES)
+        hits = hybrid_search(session, search or f"{topic} {question}", filters, limit=CANDIDATES)
         kept = rerank(question, hits)
         kept_ids = {hit.chunk.id for hit, _ in kept}
         log += [

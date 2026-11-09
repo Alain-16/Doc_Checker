@@ -1,0 +1,147 @@
+@import "tailwindcss";
+
+/* Attest palette, taken from the Claude Design file "Attest Compliance Copilot". */
+@theme {
+  --text-xs: 0.8125rem;
+  --text-xs--line-height: 1.45;
+  --text-sm: 0.9375rem;
+  --text-sm--line-height: 1.45;
+
+  --font-sans: var(--font-plex-sans), system-ui, sans-serif;
+  --font-mono: var(--font-plex-mono), ui-monospace, monospace;
+
+  --color-page: #f5f0e6;
+  --color-paper: #fffdf9;
+  --color-ink: #1b2a22;
+  --color-forest: #1e3b2f;
+  --color-forest-hover: #2b5040;
+  --color-gold: #c8b48a;
+  --color-gold-dark: #b39a63;
+  --color-sage: #7f8c6a;
+  --color-moss: #4f6b3a;
+
+  --color-muted: #5c665e;
+  --color-muted-2: #4a554d;
+  --color-muted-3: #7a827b;
+  --color-th: #56615a;
+
+  --color-line: #e0d8c7;
+  --color-line-strong: #cbc2ae;
+  --color-line-soft: #ece5d7;
+  --color-line-faint: #f0eadd;
+  --color-line-head: #ddd4c2;
+  --color-line-chip: #d2cab6;
+
+  --color-sand: #f3eee3;
+  --color-sand-2: #f6f1e7;
+  --color-hover-row: #faf6ee;
+  --color-subtle: #fbf8f1;
+  --color-input: #f8f4ec;
+  --color-viewer: #e9e3d6;
+  --color-viewer-line: #d8d0be;
+  --color-skeleton: #ece5d7;
+
+  --color-ok: #25603a;
+  --color-warn: #7a5300;
+  --color-bad: #9a2b1e;
+  --color-review: #8a4b12;
+
+  --animate-pulse-soft: pulse-soft 1.4s ease-in-out infinite;
+  @keyframes pulse-soft {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.45;
+    }
+  }
+}
+
+/* In the base layer so utility classes (btn-primary's light text, text-ink, ...) override
+   them. Unlayered, `a { color }` beat every utility and made link-buttons unreadable. */
+@layer base {
+  html,
+  body {
+    height: 100%;
+    background: var(--color-page);
+    color: var(--color-ink);
+    -webkit-font-smoothing: antialiased;
+  }
+  body {
+    font-size: 14px;
+  }
+
+  a {
+    color: var(--color-forest);
+  }
+  a:hover {
+    color: var(--color-moss);
+  }
+  :focus-visible {
+    outline: 2px solid var(--color-gold-dark);
+    outline-offset: 2px;
+  }
+}
+
+/* Buttons */
+@utility btn {
+  @apply inline-flex cursor-pointer items-center justify-center gap-1.5 rounded-md border px-3.5 py-[7px] text-[14px] font-medium whitespace-nowrap disabled:cursor-not-allowed disabled:opacity-50;
+}
+@utility btn-primary {
+  @apply btn border-forest bg-forest text-page hover:bg-forest-hover;
+}
+@utility btn-secondary {
+  @apply btn border-line-strong bg-paper text-forest hover:bg-sand;
+}
+@utility btn-danger {
+  @apply btn border-[#e2b2a8] bg-paper font-normal text-bad hover:bg-[#fbf1ee];
+}
+@utility btn-sm {
+  @apply rounded-md px-2.5 py-1 text-xs;
+}
+@utility btn-link {
+  @apply cursor-pointer border-none bg-transparent p-0 text-xs text-forest underline;
+}
+/* Surfaces */
+@utility card {
+  @apply rounded-lg border border-line bg-paper;
+}
+@utility card-head {
+  @apply flex items-center justify-between gap-2.5 border-b border-line px-4 py-3;
+}
+@utility card-title {
+  @apply m-0 text-sm font-semibold;
+}
+@utility eyebrow {
+  @apply text-[12px] tracking-[.06em] text-muted uppercase;
+}
+@utility section-label {
+  @apply text-xs font-semibold tracking-[.05em] text-muted-2 uppercase;
+}
+/* Tables */
+@utility th {
+  @apply border-b border-line-head bg-sand px-3 py-2 text-left text-[12px] font-semibold tracking-[.05em] text-th uppercase;
+}
+@utility td {
+  @apply border-b border-line-soft px-3 py-[9px] align-top;
+}
+@utility tr-link {
+  @apply cursor-pointer hover:bg-hover-row;
+}
+/* Form controls */
+@utility input {
+  @apply rounded-md border border-line-strong bg-paper px-2.5 py-[7px] text-[14px] text-ink;
+}
+@utility select {
+  @apply rounded-md border border-line-strong bg-paper px-2 py-1.5 text-xs text-ink;
+}
+@utility field-label {
+  @apply flex flex-col gap-1.5 text-xs font-medium text-muted-2;
+}
+@utility mono {
+  @apply font-mono;
+}
+@utility skeleton-bar {
+  @apply rounded-[3px] bg-skeleton;
+}

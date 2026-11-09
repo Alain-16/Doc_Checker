@@ -4,10 +4,14 @@ from .api import (
     auth,
     compliance_rules,
     copilot,
+    documents,
+    findings,
     industry_profile,
     key_attributes,
     owners,
+    review,
     rule_drafts,
+    statistics,
     users,
     vendor_files,
     vendors,
@@ -44,4 +48,8 @@ app.include_router(auth.router)
 app.include_router(owners.router)
 app.include_router(industry_profile.router)
 app.include_router(copilot.router)
+app.include_router(documents.router)
+app.include_router(findings.router)
+app.include_router(review.router)
+app.include_router(statistics.router)
 

@@ -11,7 +11,7 @@ from src.copilot.answers import NOT_FOUND, Claim, check_grounding, compose, draf
 from src.copilot.content_search import find_passages
 from src.copilot.database_tools import FindingsTool, choose_tool, read_each_document, run_findings, run_tool
 from src.copilot.source import Source, number_sources, stored_sources
-from src.copilot.understanding import QuestionPlan, Scope, plan_question, resolve_scope
+from src.copilot.understanding import QuestionPlan, Scope, plan_question, resolve_scope, search_query
 from src.llm.models import MODEL_BY_TASK, LlmTask
 from src.models import Conversation, DocumentType, Message, QueryLog, User
 from src.models.copilot import MessageRole, QuestionRoute
@@ -75,7 +75,7 @@ def content(state: AnswerState, config: RunnableConfig) -> AnswerState:
         # "Show me the source for that": the evidence already shown, not a new search
         # (a new search can keep different passages and lose some of them).
         return {"sources": stored_sources(db(config), state["previous_sources"]), "retrieved": []}
-    sources, broadened, log = find_passages(db(config), plan.standalone_question, plan.topic, state["scope"])
+    sources, broadened, log = find_passages(db(config), plan.standalone_question, plan.topic, state["scope"], search_query(plan))
     notes = state["notes"] + ([f"Nothing matched the exact scope, so I searched {broadened}."] if broadened else [])
     return {"sources": sources, "retrieved": log, "notes": notes}
 
@@ -100,7 +100,7 @@ def findings(state: AnswerState, config: RunnableConfig) -> AnswerState:
 
 def cross_document(state: AnswerState, config: RunnableConfig) -> AnswerState:
     plan = state["plan"]
-    sources, summary, call = read_each_document(db(config), plan.standalone_question, plan.topic, state["scope"])
+    sources, summary, call = read_each_document(db(config), plan.standalone_question, plan.topic, state["scope"], search_query(plan))
     log = {"tool": "read_each_document", "topic": plan.topic, "documents": call.model_dump(mode="json")}
     return {"sources": with_summary(sources, summary), "tool_calls": [{"call": log, "result": summary}]}
 

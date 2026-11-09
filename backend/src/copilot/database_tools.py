@@ -17,13 +17,16 @@ from src.models import (
     DocumentAttribute,
     DocumentType,
     KeyAttribute,
+    Page,
 )
 from src.models.document import ComplianceStatus
 from src.retrieval.search import SearchFilters, hybrid_search
 
 MAX_RECORDS = 25  # rows given to the answer; counts are exact whatever this is
 CROSS_DOCUMENT_LIMIT = 8  # documents read one by one on the cross-document route
-PASSAGES_PER_DOCUMENT = 2
+# Per document: enough that the passage that answers isn't crowded out by sections that only
+# share its words (an SDS's Sections 15-16 also say "Hazard Classification"; Section 2 answers).
+PASSAGES_PER_DOCUMENT = 4
 
 
 # =============================================================================
@@ -112,6 +115,45 @@ def document_record(context: Any) -> str:
     return f"{context.label}: status {context.status.value.replace('_', ' ')}, {governing}.{flags} {context.status_reason or ''}".strip()
 
 
+HEADING_CHARS = 140
+
+
+def first_heading(text: str) -> str | None:
+    """The first meaningful line of a page: usually the product and part the document is about
+    ("3M Scotch-Weld Epoxy Adhesive DP420 Black, part A"). Rules and page counters are skipped."""
+    for line in text.splitlines():
+        line = " ".join(line.split())
+        if len(line) >= 6 and any(ch.isalpha() for ch in line) and not set(line) <= set("_-=. "):
+            return line[:HEADING_CHARS]
+    return None
+
+
+def document_identities(session: Session, document_ids: list[uuid.UUID]) -> dict[uuid.UUID, str]:
+    """What tells documents of the same type apart: number, revision, title, and the heading
+    printed on the first page. Without it, two Safety Data Sheets (Part A and Part B) read
+    the same, and an answer can't say which value belongs to which."""
+    rows = session.execute(
+        select(Document.id, Document.document_number, Document.revision, Document.title, Page.text)
+        .outerjoin(Page, (Page.vendor_file_id == Document.vendor_file_id) & (Page.page_number == Document.start_page))
+        .where(Document.id.in_(document_ids))
+    ).all()
+    out = {}
+    for document_id, number, revision, title, first_page in rows:
+        parts = []
+        if number:
+            parts.append(f"document number {number}")
+        if revision:
+            parts.append(f"revision/version {revision}")
+        if title:
+            parts.append(f"title “{title}”")
+        heading = first_heading(first_page or "")
+        if heading and (not title or heading.casefold() != title.casefold()):
+            parts.append(f"first-page heading “{heading}”")
+        if parts:
+            out[document_id] = "Document: " + ", ".join(parts) + "."
+    return out
+
+
 def open_findings_by_document(session: Session, document_ids: list[uuid.UUID]) -> dict[uuid.UUID, list[str]]:
     """Each document's open findings as short text: 'Compliance Bulletin review age: stale'."""
     findings = session.scalars(
@@ -178,9 +220,12 @@ def run_documents(session: Session, call: DocumentsTool, scope: Scope) -> tuple[
     contexts = [by_id[i] for i in ids[:MAX_RECORDS] if i in by_id]
     findings = open_findings_by_document(session, ids[:MAX_RECORDS])
     sections = document_sections(session, ids[:MAX_RECORDS])
+    identities = document_identities(session, ids[:MAX_RECORDS])
     sources = []
     for c in contexts:
         text = document_record(c)
+        if c.document_id in identities:
+            text += " " + identities[c.document_id]
         if c.document_id in findings:
             text += " Open findings: " + "; ".join(findings[c.document_id]) + "."
         if c.document_id in sections:
@@ -200,11 +245,13 @@ def run_key_attribute(session: Session, call: KeyAttributeTool, scope: Scope) ->
     if call.only_not_stated:
         rows = [row for row in rows if row.value is None]
     contexts = document_contexts(session, [row.document_id for row in rows])
+    identities = document_identities(session, [row.document_id for row in rows[:MAX_RECORDS]])
     sources = [
         Source(
             kind="record",
             text=f"{row.key_attribute.display_name}: {'NOT STATED in this document' if row.value is None else row.value}"
-            + (f' (evidence: "{row.evidence_snippet}")' if row.evidence_snippet else ""),
+            + (f' (evidence: "{row.evidence_snippet}")' if row.evidence_snippet else "")
+            + (f" {identities[row.document_id]}" if row.document_id in identities else ""),
             context=contexts[row.document_id],
             page_start=row.page_number,
             page_end=row.page_number,
@@ -268,7 +315,23 @@ def choose_documents(question: str) -> DocumentsTool:
     ])
 
 
-def read_each_document(session: Session, question: str, topic: str, scope: Scope) -> tuple[list[Source], str, DocumentsTool]:
+RELEVANCE_CANDIDATES = 60  # chunks searched to rank documents by relevance
+
+
+def by_relevance(session: Session, ids: list[uuid.UUID], text: str, vector: list[float], scope: Scope) -> list[uuid.UUID]:
+    """The same documents, those whose best chunk ranks highest for `text` first; the rest keep their order."""
+    allowed = set(ids)
+    filters = SearchFilters(document_type_names=scope.document_type_names)
+    ranked: list[uuid.UUID] = []
+    for hit in hybrid_search(session, text, filters, limit=RELEVANCE_CANDIDATES, vector=vector):
+        if hit.chunk.document_id in allowed and hit.chunk.document_id not in ranked:
+            ranked.append(hit.chunk.document_id)
+    return ranked + [i for i in ids if i not in set(ranked)]
+
+
+def read_each_document(
+    session: Session, question: str, topic: str, scope: Scope, search: str | None = None
+) -> tuple[list[Source], str, DocumentsTool]:
     """Cross-document route: the documents the question selects (database), then each one's best passages.
 
     No reranking here (it would be one extra GPT call per document); the
@@ -276,13 +339,22 @@ def read_each_document(session: Session, question: str, topic: str, scope: Scope
     """
     call = choose_documents(question)
     ids = matching_documents(session, call, scope)
-    by_id = document_contexts(session, ids[:CROSS_DOCUMENT_LIMIT])
-    search_text = f"{topic} {question}"
+    search_text = search or f"{topic} {question}"
     vector = embedding_model().embed_query(search_text)  # once, not once per document
+    if len(ids) > CROSS_DOCUMENT_LIMIT and not (scope.vendor_ids or scope.component_ids):
+        # Nothing narrows it to a vendor or part: read the documents whose text best
+        # matches the question first, not simply the oldest. Otherwise "Part A vs Part B"
+        # depends on whether those SDSs happen to fall in the first few by date.
+        ids = by_relevance(session, ids, search_text, vector, scope)
+    by_id = document_contexts(session, ids[:CROSS_DOCUMENT_LIMIT])
+    # Which document is which (number, revision, first-page heading "... Part A"):
+    # without it, comparing two same-type documents is impossible.
+    identities = document_identities(session, ids[:CROSS_DOCUMENT_LIMIT])
     sources = []
     for document_id in ids[:CROSS_DOCUMENT_LIMIT]:
         context = by_id[document_id]
-        sources.append(Source(kind="record", text=document_record(context), context=context))
+        record = document_record(context) + (f" {identities[document_id]}" if document_id in identities else "")
+        sources.append(Source(kind="record", text=record, context=context))
         filters = SearchFilters(document_ids=[document_id])
         for hit in hybrid_search(session, search_text, filters, limit=PASSAGES_PER_DOCUMENT, vector=vector):
             sources.append(Source(kind="passage", text=hit.chunk.content, context=context, page_start=hit.chunk.page_start,

@@ -65,8 +65,10 @@ def draft_answer(question: str, sources: list[Source], profile: Profile, cover: 
     must_cover = ""
     if cover:
         must_cover = (
-            "\nWrite at least one claim for EACH of these documents, saying whether its sources "
-            "address the question:\n" + "\n".join(f"- {label}" for label in cover)
+            "\nAccount for EACH of these documents. A document whose sources address the question gets "
+            "its own claim(s). The documents whose sources do NOT address it are named together in ONE "
+            "final claim (e.g. \"X and Y do not state this.\"), not one sentence each:\n"
+            + "\n".join(f"- {label}" for label in cover)
         )
     return structured_llm(LlmTask.ANSWER_QUESTION, DraftAnswer).invoke([
         ("system", ANSWER_PROMPT.format(profile=profile.context())),

@@ -14,7 +14,7 @@ from src.models.copilot import MessageRole
 
 
 HISTORY_MESSAGES = 6
-# Names shorter than this are too likely to match by accident ("AB" inside "LAB").
+# A name shorter than this only matches as the whole name, never as part of a longer one.
 MIN_NAME_CHARS = 3
 NOT_A_NAME_CHARACTER = re.compile(r"[^0-9a-z/]+")
 
@@ -35,7 +35,9 @@ Routes:
 - findings: why something was flagged or what the compliance checks found. "Why is the bulletin stale?",
   "What's wrong with this {vendor}'s documentation?"
 - cross_document: the same question asked of many documents at once, needing both a list and
-  each document's content. "Which bulletins don't mention REACH?"
+  each document's content. "Which bulletins don't mention REACH?" Also a COMPARISON between
+  documents or parts, which needs the passage from each of them: "How do the hazard
+  classifications of Part A differ from Part B?", "Compare the storage conditions in the two bulletins."
 - out_of_scope: ONLY questions that are not about the documents or the {components} at all ("What's
   the weather?"), or that ask us to make the decision ("Should we approve this {vendor}?", "Is it
   safe to use?"): a qualified person decides those.
@@ -80,6 +82,19 @@ class Scope:
     searched_as_topic: list[str] = field(default_factory=list)
 
 
+def search_query(plan: QuestionPlan) -> str:
+    """What to search the chunks for: the topic, then the question without the names of
+    the vendor, component and document type. Those are already enforced as filters;
+    repeated in the search text they outweigh the subject, so every document's
+    identification section ("3M Scotch-Weld ... DP420 Black, Part A") beats the passage
+    that answers ("2.1 Hazard classification ...")."""
+    text = plan.standalone_question
+    for name in sorted([*plan.vendors, *plan.components, *plan.document_types], key=len, reverse=True):
+        if len(name_key(name)) >= 2:
+            text = re.sub(re.escape(name), " ", text, flags=re.IGNORECASE)
+    return " ".join(f"{plan.topic} {text}".split())
+
+
 def plan_question(
     question: str, history: list[tuple[MessageRole, str]], types: dict[str, str], profile: Profile
 ) -> QuestionPlan:
@@ -106,6 +121,12 @@ def name_key(text: str) -> str:
 def names_match(mention: str, known: str) -> bool:
     """Whole words of one inside the other: 'West' matches 'West Pharmaceutical Services, Inc.'."""
     a, b = name_key(mention), name_key(known)
+    if not a or not b:
+        return False
+    # The whole name, however short: "3M" is the vendor 3M.
+    if a == b:
+        return True
+    # Part of a name only from 3 characters up, so a stray short word can't pick a vendor.
     if len(a) < MIN_NAME_CHARS or len(b) < MIN_NAME_CHARS:
         return False
     return f" {a} " in f" {b} " or f" {b} " in f" {a} "

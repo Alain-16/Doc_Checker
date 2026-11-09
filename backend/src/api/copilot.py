@@ -59,7 +59,7 @@ def own_conversation(session: Session, conversation_id: uuid.UUID, user: User) -
 @router.get("", response_model=list[ConversationOut])
 def my_conversations(user: User = Depends(current_user), session: Session = Depends(get_session)) -> list[Conversation]:
 
-    return list(session.scalars(select(Conversation)).where(Conversation.user_id == user.id).order_by(Conversation.created_at.desc()))
+    return list(session.scalars(select(Conversation).where(Conversation.user_id == user.id).order_by(Conversation.created_at.desc())))
 
 @router.post("", response_model=ConversationDetailOut, status_code=status.HTTP_201_CREATED)
 def start_conversation(body: Question, user: User = Depends(current_user), session: Session = Depends(get_session)) -> Conversation:
