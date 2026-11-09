@@ -23,6 +23,7 @@ class LlmTask(StrEnum):
     CHOOSE_QUERY_TOOL = "choose_query_tool"
     ANSWER_QUESTION = "answer_question"
     CHECK_GROUNDING = "check_grounding"
+    DRAFT_RULES = "draft_rules"
 
 
 # Which model each task uses. The PRD leaves the final choice to the Feature 13
@@ -39,6 +40,7 @@ MODEL_BY_TASK: dict[LlmTask, str] = {
     LlmTask.CHOOSE_QUERY_TOOL: "gpt-5",
     LlmTask.ANSWER_QUESTION: "gpt-5",
     LlmTask.CHECK_GROUNDING: "gpt-5",
+    LlmTask.DRAFT_RULES: "gpt-5",
 }
 
 REASONING_EFFORT_BY_TASK: dict[LlmTask, str] = {
@@ -51,6 +53,9 @@ REASONING_EFFORT_BY_TASK: dict[LlmTask, str] = {
     # sources and the grounding check verifies each one, so "low" is enough.
     LlmTask.ANSWER_QUESTION: "low",
     LlmTask.CHECK_GROUNDING: "minimal",
+    # Measured 2026-11-05: the default took 74-144 s per policy, against a 120 s
+    # request timeout. Every draft is validated and read back before anyone signs.
+    LlmTask.DRAFT_RULES: "low",
 }
 
 

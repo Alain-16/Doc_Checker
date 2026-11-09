@@ -9,6 +9,7 @@ from src.config.database import engine
 # importing the pipeline (and with it PyMuPDF, OpenCV and Tesseract).
 PROCESS_VENDOR_FILE_TASK = "process_vendor_file"
 EVALUATE_ALL_COMPLIANCE_TASK = "evaluate_all_compliance"
+FILL_IN_ATTRIBUTES_TASK = "fill_in_attributes"
 FOLLOW_UP_ALERTS_TASK = "follow_up_alerts"
 SEND_ALERT_EMAILS_TASK = "send_alert_emails"
 SEND_ALERT_DIGESTS_TASK = "send_alert_digests"

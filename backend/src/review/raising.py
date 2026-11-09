@@ -5,6 +5,7 @@ from typing import Any
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
+from src.industry.profile import current_profile
 from src.review.notifications import notify
 from src.review.policies import (
     ComingDueParameters,
@@ -13,7 +14,7 @@ from src.review.policies import (
     current_policies,
     parameters_of,
 )
-from src.models import Alert, AlertPolicy, ComplianceFinding, Component, Document, ReviewItem, VendorFile
+from src.models import Alert, AlertPolicy, ComplianceFinding, Component, Document, ReviewItem, Vendor, VendorFile
 from src.models.alert import AlertEvent, AlertStatus, DeliveryKind
 from src.models.compliance import FindingSeverity
 from src.models.document import ComplianceStatus
@@ -44,6 +45,7 @@ class AlertDraft:
     evidence: dict[str, Any] = field(default_factory=dict)
     document_id: Any = None
     component_id: Any = None
+    vendor_id: Any = None
     vendor_file_id: Any = None
     finding_id: Any = None
 
@@ -70,6 +72,8 @@ def finding_drafts(session: Session, parameters: FindingAlertParameters) -> dict
         )
     ).all()
     component_names = dict(session.execute(select(Component.id, Component.name)).all())
+    vendor_names = dict(session.execute(select(Vendor.id, Vendor.name)).all())
+    profile = current_profile(session)
     drafts = {}
     for finding in findings:
         critical = finding.severity == FindingSeverity.CRITICAL and parameters.always_alert_critical
@@ -77,8 +81,10 @@ def finding_drafts(session: Session, parameters: FindingAlertParameters) -> dict
             continue
         if finding.document:
             subject = describe_document(finding.document)
+        elif finding.vendor_id:
+            subject = f"{profile.vendor_label} {vendor_names.get(finding.vendor_id, '')}".strip()
         else:
-            subject = f"Component {component_names.get(finding.component_id, '')}".strip()
+            subject = f"{profile.component_label} {component_names.get(finding.component_id, '')}".strip()
         status = finding.status.value.replace("_", " ")
         drafts[f"finding:{finding.id}"] = AlertDraft(
             # The rule's name tells two alerts on the same document apart.
@@ -88,6 +94,7 @@ def finding_drafts(session: Session, parameters: FindingAlertParameters) -> dict
             evidence={"rule_code": finding.rule_code, "status": finding.status.value, **finding.evidence},
             document_id=finding.document_id,
             component_id=finding.component_id,
+            vendor_id=finding.vendor_id,
             vendor_file_id=finding.document.vendor_file_id if finding.document else None,
             finding_id=finding.id,
         )
@@ -130,6 +137,7 @@ def sync_alerts(
             policy_id=policy.id,
             document_id=draft.document_id,
             component_id=draft.component_id,
+            vendor_id=draft.vendor_id,
             vendor_file_id=draft.vendor_file_id,
             finding_id=draft.finding_id,
             last_notified_at=now,

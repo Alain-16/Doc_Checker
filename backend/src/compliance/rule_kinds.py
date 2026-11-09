@@ -5,102 +5,26 @@ a new kind of check is new code here. Checks are pure functions of the facts
 they're given (no database), so each can be tested on its own.
 """
 
-import calendar
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import date
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import Field, model_validator
 
-from src.models.compliance import RuleKind
+from src.compliance.conditions import Condition, Truth, evaluate
+from src.compliance.facts import (
+    DocumentFacts,
+    GroupDocument,
+    GroupFacts,
+    Outcome,
+    RuleParameters,
+    add_months,
+    label,
+)
+from src.models.compliance import RuleKind, RuleLevel
 from src.models.document import ComplianceStatus, DateType
 from src.models.review import ReviewItemKind
-
-MONTHS_PER_YEAR = 12
-
-
-# =============================================================================
-# Facts: what a check may look at
-# =============================================================================
-
-
-@dataclass(frozen=True)
-class DateFact:
-    date_type: DateType
-    value: date
-    page_number: int
-    original_text: str
-    # False = mentioned by the document ("supersedes Rev. 10 (2019)"), not about it.
-    is_document_date: bool
-
-
-@dataclass(frozen=True)
-class AttributeFact:
-    name: str
-    display_name: str
-    value: Any  # None = not stated
-    page_number: int | None
-
-
-@dataclass(frozen=True)
-class ReviewFact:
-    kind: ReviewItemKind
-    reason: str
-    page_number: int | None
-
-
-@dataclass(frozen=True)
-class DocumentFacts:
-    document_type: str  # name, e.g. "compliance_bulletin"
-    document_type_label: str  # display name, e.g. "Compliance Bulletin"
-    dates: list[DateFact]
-    attributes: dict[str, AttributeFact]  # by key attribute name
-    open_reviews: list[ReviewFact]
-
-
-@dataclass(frozen=True)
-class ComponentDocument:
-    document_type: str
-    document_type_label: str
-    status: ComplianceStatus
-    title: str | None
-
-
-@dataclass(frozen=True)
-class ComponentFacts:
-    name: str
-    # The component's current (not superseded) documents, status already evaluated.
-    current_documents: list[ComponentDocument]
-    # Document type name -> label, for types found only among superseded documents.
-    superseded_types: dict[str, str]
-    document_type_labels: dict[str, str]  # every known type, for messages
-
-
-@dataclass
-class Outcome:
-    """What a check concluded. A check returns None when it has nothing to say."""
-
-    status: ComplianceStatus
-    message: str  # one sentence a user can read (Feature 7)
-    governing_date: date | None = None
-    evidence: dict[str, Any] = field(default_factory=dict)
-
-
-def label(date_type: DateType) -> str:
-    return date_type.value.replace("_", " ")
-
-
-def add_months(day: date, months: int) -> date:
-    """30 Jun 2022 + 36 months = 30 Jun 2025; 31 Jan + 1 month = 28/29 Feb."""
-    years, month_index = divmod(day.month - 1 + months, MONTHS_PER_YEAR)
-    year, month = day.year + years, month_index + 1
-    return date(year, month, min(day.day, calendar.monthrange(year, month)[1]))
-
-
-class RuleParameters(BaseModel):
-    # Unknown keys are refused, so a typo in a rule ("treshold") is an error, not ignored.
-    model_config = ConfigDict(extra="forbid")
 
 
 # =============================================================================
@@ -110,9 +34,14 @@ class RuleParameters(BaseModel):
 
 class DocumentAgeParameters(RuleParameters):
     governing_date_types: list[DateType] = Field(
-        min_length=1,
+        default_factory=list,
         description="Date types that can govern the document's age; the latest one found is used, "
         "e.g. ['signature', 'revision'].",
+    )
+    governing_attributes: list[str] = Field(
+        default_factory=list,
+        description="Date key attributes that can govern it too, for dates the fixed types don't "
+        "name, e.g. ['calibration_date'].",
     )
     include_referenced_dates: bool = Field(
         default=False,
@@ -129,6 +58,39 @@ class DocumentAgeParameters(RuleParameters):
         "instead of its age: stale once expired, approaching review within warning_months of it. "
         "Certificates, permits and licences carry one in every industry.",
     )
+
+    @model_validator(mode="after")
+    def has_a_governing_date(self) -> "DocumentAgeParameters":
+        if not self.governing_date_types and not self.governing_attributes:
+            raise ValueError("Name at least one governing date type or date attribute.")
+        return self
+
+
+@dataclass(frozen=True)
+class GoverningDate:
+    """A date that can govern age: a labelled date, or a date attribute."""
+
+    source: str  # the date type, or the attribute's name
+    name: str  # as a sentence starts it: "Signature date", "Calibration Date"
+    value: date
+    page_number: int | None
+    original_text: str | None
+
+
+def governing_candidates(facts: DocumentFacts, parameters: DocumentAgeParameters) -> list[GoverningDate]:
+    candidates = [
+        GoverningDate(fact.date_type.value, f"{label(fact.date_type)} date".capitalize(), fact.value, fact.page_number, fact.original_text)
+        for fact in facts.dates
+        if fact.date_type in parameters.governing_date_types
+        and (fact.is_document_date or parameters.include_referenced_dates)
+    ]
+    for name in parameters.governing_attributes:
+        fact = facts.attributes.get(name)
+        if fact is not None and fact.value is not None:
+            candidates.append(
+                GoverningDate(name, fact.display_name, date.fromisoformat(fact.value), fact.page_number, fact.evidence_snippet)
+            )
+    return candidates
 
 
 def check_stated_expiry(facts: DocumentFacts, parameters: DocumentAgeParameters, today: date) -> Outcome | None:
@@ -162,27 +124,28 @@ def check_document_age(facts: DocumentFacts, parameters: DocumentAgeParameters, 
         by_expiry = check_stated_expiry(facts, parameters, today)
         if by_expiry is not None:
             return by_expiry
-    candidates = [
-        fact
-        for fact in facts.dates
-        if fact.date_type in parameters.governing_date_types
-        and (fact.is_document_date or parameters.include_referenced_dates)
-    ]
-    wanted = " or ".join(label(t) for t in parameters.governing_date_types)
+    candidates = governing_candidates(facts, parameters)
     if not candidates:
-        return Outcome(ComplianceStatus.NEEDS_REVIEW, f"No {wanted} date was found to judge the document's age.")
+        waiting = [name for name in parameters.governing_attributes if name not in facts.attributes]
+        if waiting and not parameters.governing_date_types:
+            return Outcome(
+                ComplianceStatus.NEEDS_REVIEW, f"{', '.join(waiting)} not extracted yet, so the document's age can't be judged."
+            )
+        wanted = [f"{' or '.join(label(t) for t in parameters.governing_date_types)} date"] if parameters.governing_date_types else []
+        wanted += [facts.attributes[name].display_name for name in parameters.governing_attributes if name in facts.attributes]
+        return Outcome(ComplianceStatus.NEEDS_REVIEW, f"No {' or '.join(wanted)} was found to judge the document's age.")
 
-    governing = max(candidates, key=lambda fact: fact.value)
+    governing = max(candidates, key=lambda candidate: candidate.value)
     due = add_months(governing.value, parameters.threshold_months)
     warn_from = add_months(governing.value, parameters.threshold_months - parameters.warning_months)
     evidence = {
-        "date_type": governing.date_type.value,
+        "date_type": governing.source,
         "date": governing.value.isoformat(),
         "original_text": governing.original_text,
         "page": governing.page_number,
         "review_due": due.isoformat(),
     }
-    since = f"{label(governing.date_type).capitalize()} date {governing.value:%d-%b-%Y} (page {governing.page_number})"
+    since = f"{governing.name} {governing.value:%d-%b-%Y} (page {governing.page_number})"
     limit = f"the {parameters.threshold_months}-month review threshold"
     if today >= due:
         status, message = ComplianceStatus.STALE, f"{since} exceeds {limit}; review was due {due:%d-%b-%Y}."
@@ -204,15 +167,12 @@ class MissingFieldParameters(RuleParameters):
 
 
 def check_missing_field(facts: DocumentFacts, parameters: MissingFieldParameters, today: date) -> Outcome | None:
+    # No row = not extracted yet: nothing is known, so it isn't reported as missing.
     if parameters.key_attributes:
-        missing = [
-            facts.attributes[name].display_name if name in facts.attributes else name
-            for name in parameters.key_attributes
-            if name not in facts.attributes or facts.attributes[name].value is None
-        ]
+        named = [facts.attributes[name] for name in parameters.key_attributes if name in facts.attributes]
     else:
-        # Extraction writes a "not stated" row (value None) for every required attribute it couldn't find.
-        missing = [fact.display_name for fact in facts.attributes.values() if fact.value is None]
+        named = [fact for fact in facts.attributes.values() if fact.required]
+    missing = [fact.display_name for fact in named if fact.value is None]
     own_types = {fact.date_type for fact in facts.dates if fact.is_document_date}
     missing += [f"{label(t)} date" for t in parameters.date_types if t not in own_types]
     if not missing:
@@ -338,9 +298,9 @@ class MissingDocumentParameters(RuleParameters):
 
 
 def check_missing_document(
-    facts: ComponentFacts, parameters: MissingDocumentParameters, today: date
+    facts: GroupFacts, parameters: MissingDocumentParameters, today: date
 ) -> Outcome | None:
-    by_type: dict[str, list[ComponentDocument]] = {}
+    by_type: dict[str, list[GroupDocument]] = {}
     for document in facts.current_documents:
         by_type.setdefault(document.document_type, []).append(document)
     missing = [facts.document_type_labels.get(t, t) for t in parameters.document_types if t not in by_type]
@@ -368,7 +328,7 @@ class RevisionWithoutReplacementParameters(RuleParameters):
 
 
 def check_revision_without_replacement(
-    facts: ComponentFacts, parameters: RevisionWithoutReplacementParameters, today: date
+    facts: GroupFacts, parameters: RevisionWithoutReplacementParameters, today: date
 ) -> Outcome | None:
     """A type found only in superseded documents: no current document of that type remains.
 
@@ -392,46 +352,111 @@ def check_revision_without_replacement(
 
 
 # =============================================================================
+# Kinds for any level
+# =============================================================================
+
+
+class ConditionParameters(RuleParameters):
+    when: Condition | None = Field(
+        default=None, description="Only judge subjects where this holds. Empty = all of them."
+    )
+    when_unknown: Literal["skip", "review"] = Field(
+        default="skip",
+        description="When a subject doesn't state what `when` asks: skip it, or send it for review.",
+    )
+    require: Condition = Field(description="What must hold.")
+
+
+def check_condition(
+    facts: DocumentFacts | GroupFacts, parameters: ConditionParameters, today: date
+) -> Outcome | None:
+    """QA's own rule. A `when` that doesn't hold means the rule doesn't apply, and
+    anything still waiting for extraction says nothing yet."""
+    prefix = f"{facts.name}: " if isinstance(facts, GroupFacts) else ""
+    if parameters.when is not None:
+        applies = evaluate(parameters.when, facts, today)
+        if applies.truth == Truth.NOT_STATED and parameters.when_unknown == "review":
+            return Outcome(
+                ComplianceStatus.NEEDS_REVIEW,
+                f"{prefix}Can't tell whether this rule applies: {applies.detail}.",
+                evidence={"result": applies.truth.value, "checks": applies.evidence},
+            )
+        if applies.truth != Truth.MET:
+            return None
+    verdict = evaluate(parameters.require, facts, today)
+    if verdict.truth in (Truth.MET, Truth.PENDING):
+        return None
+    outcome = "can't be confirmed" if verdict.truth == Truth.NOT_STATED else "not met"
+    return Outcome(
+        ComplianceStatus.NEEDS_REVIEW,
+        f"{prefix}Requirement {outcome}: {verdict.detail}.",
+        evidence={"result": verdict.truth.value, "checks": verdict.evidence},
+    )
+
+
+class ManualCheckParameters(RuleParameters):
+    instructions: str = Field(min_length=1, description="What a person must check, in QA's words.")
+
+
+def check_manual(facts: Any, parameters: ManualCheckParameters, today: date) -> None:
+    """Can't be judged from documents: recorded and signed, but never changes a status."""
+    return None
+
+
+# =============================================================================
 # The registry: everything the engine and the API need to know about each kind
 # =============================================================================
 
 
 @dataclass(frozen=True)
 class RuleKindSpec:
-    level: Literal["document", "component"]
+    levels: tuple[RuleLevel, ...]  # the first is the default
     parameters: type[RuleParameters]
     check: Callable[..., Outcome | None]
     description: str
 
 
+DOCUMENT_ONLY = (RuleLevel.DOCUMENT,)
+COMPONENT_ONLY = (RuleLevel.COMPONENT,)
+ANY_LEVEL = (RuleLevel.DOCUMENT, RuleLevel.COMPONENT, RuleLevel.VENDOR)
+
 RULE_KINDS: dict[RuleKind, RuleKindSpec] = {
     RuleKind.DOCUMENT_AGE: RuleKindSpec(
-        "document", DocumentAgeParameters, check_document_age,
+        DOCUMENT_ONLY, DocumentAgeParameters, check_document_age,
         "Current, approaching review or stale, from the latest governing date. For one document type, "
         "a type's own age rules replace the default (all-types) one.",
     ),
     RuleKind.MISSING_FIELD: RuleKindSpec(
-        "document", MissingFieldParameters, check_missing_field,
+        DOCUMENT_ONLY, MissingFieldParameters, check_missing_field,
         "Flags documents that don't state required key attributes or dates.",
     ),
     RuleKind.RECORD_COMPLETENESS: RuleKindSpec(
-        "document", RecordCompletenessParameters, check_record_completeness,
+        DOCUMENT_ONLY, RecordCompletenessParameters, check_record_completeness,
         "Flags records (e.g. lots) missing a required field (e.g. manufacturing date).",
     ),
     RuleKind.DATE_CONFLICT: RuleKindSpec(
-        "document", DateConflictParameters, check_date_conflict,
+        DOCUMENT_ONLY, DateConflictParameters, check_date_conflict,
         "Flags impossible future dates and dates in the wrong order.",
     ),
     RuleKind.LOW_CONFIDENCE: RuleKindSpec(
-        "document", LowConfidenceParameters, check_low_confidence,
+        DOCUMENT_ONLY, LowConfidenceParameters, check_low_confidence,
         "Flags documents with uncertain results still waiting in the review queue.",
     ),
     RuleKind.MISSING_DOCUMENT: RuleKindSpec(
-        "component", MissingDocumentParameters, check_missing_document,
+        COMPONENT_ONLY, MissingDocumentParameters, check_missing_document,
         "Flags components missing a required document type, or whose required document isn't current.",
     ),
     RuleKind.REVISION_WITHOUT_REPLACEMENT: RuleKindSpec(
-        "component", RevisionWithoutReplacementParameters, check_revision_without_replacement,
+        COMPONENT_ONLY, RevisionWithoutReplacementParameters, check_revision_without_replacement,
         "Flags document types present in a component's older file but missing from its current one.",
+    ),
+    RuleKind.CONDITION: RuleKindSpec(
+        ANY_LEVEL, ConditionParameters, check_condition,
+        "QA's own rule: when one condition holds, another must. Conditions check attributes, dates, "
+        "required documents and values across two documents, and combine with all, any and not.",
+    ),
+    RuleKind.MANUAL_CHECK: RuleKindSpec(
+        ANY_LEVEL, ManualCheckParameters, check_manual,
+        "A rule documents can't prove: recorded and signed for people to carry out, never judged here.",
     ),
 }

@@ -111,6 +111,7 @@ class Alert(Base):
     # --- What it is about (any that apply) ---
     document_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("documents.id", ondelete="RESTRICT"), index=True)
     component_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("components.id", ondelete="RESTRICT"), index=True)
+    vendor_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("vendors.id", ondelete="RESTRICT"), index=True)
     vendor_file_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("vendor_files.id", ondelete="RESTRICT"))
     finding_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("compliance_findings.id", ondelete="RESTRICT"), index=True

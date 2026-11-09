@@ -19,6 +19,7 @@ class DocumentTypeOrigin(StrEnum):
 
     SEEDED = "seeded"
     DISCOVERED = "discovered"
+    CONFIGURED = "configured"  # named by a signed QA rule, before any document showed it
 
 
 class ComplianceStatus(StrEnum):

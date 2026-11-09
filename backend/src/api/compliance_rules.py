@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime
-from typing import Any, Literal
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
@@ -12,7 +12,7 @@ from src.compliance.rule_kinds import RULE_KINDS
 from src.compliance.rules import RuleError, create_rule, update_rule
 from src.config.database import get_session
 from src.models import ComplianceRule, User
-from src.models.compliance import FindingSeverity, RuleKind
+from src.models.compliance import FindingSeverity, RuleKind, RuleLevel
 from src.workers.celery_app import EVALUATE_ALL_COMPLIANCE_TASK, celery_app
 
 # Everyone signed in can read rules; Compliance Specialists and Admins change them, with an e-signature.
@@ -24,7 +24,7 @@ router = APIRouter(prefix="/compliance-rules", tags=["compliance rules"], depend
 
 class RuleKindOut(BaseModel):
     kind: RuleKind
-    level: Literal["document", "component"]
+    levels: list[RuleLevel]  # what rules of this kind can judge; the first is the default
     description: str
     # JSON Schema of the kind's parameters, so a QA screen can build its form from it.
     parameters_schema: dict[str, Any]
@@ -36,6 +36,7 @@ class RuleVersionOut(BaseModel):
     parameters: dict[str, Any]
     severity: FindingSeverity
     active: bool
+    source_text: str | None  # QA's own words, for rules written in plain language
     change_reason: str
     changed_by_id: uuid.UUID | None
     created_at: datetime
@@ -45,7 +46,7 @@ class RuleOut(BaseModel):
     id: uuid.UUID
     code: str
     kind: RuleKind
-    level: Literal["document", "component"]
+    level: RuleLevel
     document_type: str | None  # None = every document type
     current: RuleVersionOut
 
@@ -69,6 +70,7 @@ class RuleSettings(BaseModel):
 class RuleCreate(RuleSettings):
     code: str = Field(examples=["FORMULATION_FIVE_YEAR_AGE"])
     kind: RuleKind
+    level: RuleLevel | None = Field(default=None, description="Empty = the kind's default level.")
     document_type: str | None = Field(default=None, description="Document type name; empty = every type.")
 
 
@@ -81,7 +83,7 @@ def rule_out(rule: ComplianceRule, with_history: bool = False) -> RuleOut:
         id=rule.id,
         code=rule.code,
         kind=rule.kind,
-        level=RULE_KINDS[rule.kind].level,
+        level=rule.level,
         document_type=rule.document_type.name if rule.document_type else None,
         current=version_out(rule.current),
     )
@@ -114,7 +116,7 @@ def save_and_reevaluate(session: Session) -> None:
 def list_kinds() -> list[RuleKindOut]:
     """The checks rules can be made from, with their parameters."""
     return [
-        RuleKindOut(kind=kind, level=spec.level, description=spec.description, parameters_schema=spec.parameters.model_json_schema())
+        RuleKindOut(kind=kind, levels=list(spec.levels), description=spec.description, parameters_schema=spec.parameters.model_json_schema())
         for kind, spec in RULE_KINDS.items()
     ]
 

@@ -5,7 +5,9 @@ document says stays searchable through the chunk index and the assistant.
 """
 
 import logging
+import math
 import re
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import date
@@ -18,10 +20,21 @@ from sqlalchemy.orm import Session
 from src.config.settings import get_settings
 from src.industry.profile import current_profile
 from src.llm.models import LlmTask, embedding_model, structured_llm
-from src.models import Chunk, Document, DocumentAttribute, DocumentDate, KeyAttribute, Page, ReviewItem, VendorFile
+from src.models import (
+    Chunk,
+    Document,
+    DocumentAttribute,
+    DocumentDate,
+    DocumentType,
+    KeyAttribute,
+    Page,
+    ReviewItem,
+    VendorFile,
+)
 from src.models.compliance import AttributeGroup, AttributeValueType
 from src.models.document import DateType, ResultMethod
 from src.models.review import ReviewItemKind
+from src.models.vendor_file import ProcessingStatus
 from src.retrieval.search import SearchFilters, hybrid_search
 
 logger = logging.getLogger(__name__)
@@ -137,6 +150,8 @@ def value_annotation(attribute: KeyAttribute) -> Any:
     match attribute.value_type:
         case AttributeValueType.TEXT | AttributeValueType.DATE:
             return str
+        case AttributeValueType.NUMBER:
+            return float
         case AttributeValueType.TEXT_LIST:
             return list[str]
         case AttributeValueType.STATUS:
@@ -244,6 +259,8 @@ def normalized_value(attribute: KeyAttribute, value: Any) -> Any:
                 return None
         case AttributeValueType.TEXT:
             return value.strip(STRAY_EDGE_SYMBOLS) or None
+        case AttributeValueType.NUMBER:
+            return value if math.isfinite(value) else None
         case AttributeValueType.TEXT_LIST:
             return [item.strip(STRAY_EDGE_SYMBOLS) for item in value if item.strip(STRAY_EDGE_SYMBOLS)] or None
         case AttributeValueType.RECORDS:
@@ -272,10 +289,11 @@ def save_answers(
             value = None
 
         if value is None:
-            if attribute.required and expects_values:
+            if expects_values:
                 # Not stated: no page or snippet, since there's nothing to cite.
-                # The rule is certain about what it found; whether the gap
-                # matters is for the rules engine (Feature 7) to decide.
+                # Written for every attribute, required or not: no row means
+                # "not looked for yet", which rules must treat differently.
+                # Whether the gap matters is for the rules engine to decide.
                 session.add(
                     DocumentAttribute(
                         document_id=document.id,
@@ -334,11 +352,20 @@ class DocumentJob:
 
 
 def prepare_job(
-    session: Session, document: Document, pages: list[Page], vectors: dict[str, list[float]]
+    session: Session,
+    document: Document,
+    pages: list[Page],
+    vectors: dict[str, list[float]],
+    only: set[uuid.UUID] | None = None,
 ) -> DocumentJob:
-    """Step 1 (main thread): every database read and index search for one document."""
+    """Step 1 (main thread): every database read and index search for one document.
+
+    `only` limits it to these attributes, when old documents are being filled in.
+    """
     document_pages = [page for page in pages if document.start_page <= page.page_number <= document.end_page]
     attributes = applicable_attributes(session, document)
+    if only is not None:
+        attributes = [attribute for attribute in attributes if attribute.id in only]
     from_control_pages = [a for a in attributes if a.attribute_group != AttributeGroup.PRIORITY]
     from_search = [a for a in attributes if a.attribute_group == AttributeGroup.PRIORITY]
     passages = priority_passages(session, document, from_search, vectors) if from_search else []
@@ -381,6 +408,11 @@ def extract_key_attributes(session: Session, vendor_file: VendorFile) -> None:
     vectors = dict(zip(queries, embedding_model().embed_documents(queries), strict=True)) if queries else {}
 
     jobs = [prepare_job(session, document, pages, vectors) for document in documents]
+    ask_and_save(session, jobs)
+
+
+def ask_and_save(session: Session, jobs: list[DocumentJob]) -> None:
+    """Steps 2 and 3: ask GPT, then validate and save."""
     # A plain string: the worker threads must not touch the session.
     profile_context = current_profile(session).context()
 
@@ -399,3 +431,63 @@ def extract_key_attributes(session: Session, vendor_file: VendorFile) -> None:
     # Step 3 (main thread): validate and save.
     for job in jobs:
         save_answers(session, job.document, job.attributes, job.answers, job.pages_by_number, job.passages)
+
+
+# =============================================================================
+# Filling in old documents when an attribute is added
+# =============================================================================
+
+
+def documents_missing(session: Session, attributes: list[KeyAttribute]) -> dict[uuid.UUID, list[Document]]:
+    """Documents with no row yet for one of these attributes, by vendor file.
+
+    Current, processed documents only: a superseded one is no longer judged,
+    and an unclassified one isn't expected to state anything.
+    """
+    found: dict[uuid.UUID, list[Document]] = {}
+    documents = session.scalars(
+        select(Document)
+        .join(VendorFile, Document.vendor_file_id == VendorFile.id)
+        .join(DocumentType, Document.document_type_id == DocumentType.id)
+        .where(
+            VendorFile.processing_status == ProcessingStatus.COMPLETED,
+            Document.superseded_by_id.is_(None),
+            DocumentType.name != UNKNOWN_DOCUMENT_TYPE,
+        )
+    ).all()
+    existing = set(
+        session.execute(
+            select(DocumentAttribute.document_id, DocumentAttribute.key_attribute_id).where(
+                DocumentAttribute.key_attribute_id.in_([attribute.id for attribute in attributes])
+            )
+        ).tuples()
+    )
+    for document in documents:
+        if any(
+            attribute.document_type_id in (None, document.document_type_id)
+            and (document.id, attribute.id) not in existing
+            for attribute in attributes
+        ):
+            found.setdefault(document.vendor_file_id, []).append(document)
+    return found
+
+
+def fill_in_file(
+    session: Session, vendor_file_id: uuid.UUID, documents: list[Document], attributes: list[KeyAttribute]
+) -> None:
+    """Extract these attributes for documents of one file that don't have them yet."""
+    pages = session.scalars(
+        select(Page).where(Page.vendor_file_id == vendor_file_id).order_by(Page.page_number)
+    ).all()
+    queries = sorted({attribute.search_query for attribute in attributes if attribute.search_query})
+    vectors = dict(zip(queries, embedding_model().embed_documents(queries), strict=True)) if queries else {}
+    jobs = []
+    for document in documents:
+        have = set(
+            session.scalars(
+                select(DocumentAttribute.key_attribute_id).where(DocumentAttribute.document_id == document.id)
+            )
+        )
+        wanted = {attribute.id for attribute in attributes} - have
+        jobs.append(prepare_job(session, document, pages, vectors, only=wanted))
+    ask_and_save(session, jobs)

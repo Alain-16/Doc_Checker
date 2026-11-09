@@ -211,20 +211,26 @@ def run_key_attribute(session: Session, call: KeyAttributeTool, scope: Scope) ->
         )
         for row in rows[:MAX_RECORDS]
     ]
-    return sources, f"{len(rows)} document(s) have a recorded '{call.attribute}'"
+    stated = sum(row.value is not None for row in rows)
+    return sources, f"{stated} of {len(rows)} document(s) checked state '{call.attribute}'"
 
 
 def run_findings(session: Session, call: FindingsTool, scope: Scope) -> tuple[list[Source], str]:
     in_scope = ComplianceFinding.document_id.in_(scoped_documents(scope))
-    # Component-level findings ("no current bulletin") belong to the components asked
-    # about: named ones, the named vendors' ones, or all when nothing is named.
+    # Component and vendor findings ("no current bulletin") belong to what was asked
+    # about: named components, the named vendors and their components, or all when
+    # nothing is named.
     if scope.component_ids:
         in_scope = in_scope | ComplianceFinding.component_id.in_(scope.component_ids)
     elif scope.vendor_ids:
         vendor_components = select(Component.id).where(Component.vendor_id.in_(scope.vendor_ids))
-        in_scope = in_scope | ComplianceFinding.component_id.in_(vendor_components)
+        in_scope = (
+            in_scope
+            | ComplianceFinding.component_id.in_(vendor_components)
+            | ComplianceFinding.vendor_id.in_(scope.vendor_ids)
+        )
     else:
-        in_scope = in_scope | ComplianceFinding.component_id.is_not(None)
+        in_scope = in_scope | ComplianceFinding.component_id.is_not(None) | ComplianceFinding.vendor_id.is_not(None)
     query = (
         select(ComplianceFinding)
         .where(ComplianceFinding.resolved.is_(False), in_scope)
@@ -244,7 +250,7 @@ def run_findings(session: Session, call: FindingsTool, scope: Scope) -> tuple[li
         )
         for f in findings[:MAX_RECORDS]
     ]
-    return sources, f"{len(findings)} open finding(s) in total on the documents and component asked about"
+    return sources, f"{len(findings)} open finding(s) in total on the documents, components and vendors asked about"
 
 
 def run_tool(session: Session, call: Any, scope: Scope) -> tuple[list[Source], str]:

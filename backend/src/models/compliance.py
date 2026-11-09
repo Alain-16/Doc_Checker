@@ -28,6 +28,7 @@ class AttributeValueType(StrEnum):
     TEXT_LIST = "text_list"  # e.g. every item number the document covers
     DATE = "date"  # stored as "YYYY-MM-DD"
     STATUS = "status"  # one of StatusValue
+    NUMBER = "number"  # a plain number; the attribute's description names the unit
     RECORDS = "records"  # rows of named fields, e.g. lot number + manufacturing date
 
 
@@ -55,6 +56,23 @@ class RuleKind(StrEnum):
     # Component-level: about what a component's documents are, not one document.
     MISSING_DOCUMENT = "missing_document"
     REVISION_WITHOUT_REPLACEMENT = "revision_without_replacement"
+    # Any level: QA's own rule, built from conditions rather than a fixed check.
+    CONDITION = "condition"
+    # Any level: a rule documents can't prove. Recorded, never judged.
+    MANUAL_CHECK = "manual_check"
+
+
+class RuleLevel(StrEnum):
+    """What a rule judges, and so what its findings are about."""
+
+    DOCUMENT = "document"
+    COMPONENT = "component"
+    VENDOR = "vendor"
+
+
+class RuleDraftStatus(StrEnum):
+    OPEN = "open"
+    CONFIRMED = "confirmed"
 
 
 class KeyAttribute(Base):
@@ -62,7 +80,8 @@ class KeyAttribute(Base):
 
     Only what QA checks on every document is extracted; everything else stays
     in the document and is answered by search (the compliance assistant).
-    Seeded by migration for now; QA edits it once users and signatures exist (F14).
+    Core and type-specific ones are seeded; QA adds priority ones through
+    /key-attributes, or as part of a rule that needs a new fact.
     """
 
     __tablename__ = "key_attributes"
@@ -148,12 +167,13 @@ class ComplianceRule(Base):
     """
 
     __tablename__ = "compliance_rules"
-    __table_args__ = (enum_check("kind", RuleKind),)
+    __table_args__ = (enum_check("kind", RuleKind), enum_check("level", RuleLevel))
 
     # Stable name used in findings and messages, e.g. "COMPLIANCE_BULLETIN_AGE".
     code: Mapped[str] = mapped_column(unique=True)
     kind: Mapped[RuleKind] = mapped_column(string_enum(RuleKind))
-    # Empty = every document type (and always empty for component-level kinds).
+    level: Mapped[RuleLevel] = mapped_column(string_enum(RuleLevel))
+    # Empty = every document type (and always empty for component and vendor rules).
     document_type_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("document_types.id", ondelete="RESTRICT"), index=True
     )
@@ -186,6 +206,8 @@ class ComplianceRuleVersion(Base):
     parameters: Mapped[dict[str, Any]] = mapped_column(default=dict, server_default=EMPTY_JSONB)
     severity: Mapped[FindingSeverity] = mapped_column(string_enum(FindingSeverity))
     active: Mapped[bool]
+    # QA's own words, when the rule was written in plain language. Signed with the rest.
+    source_text: Mapped[str | None] = mapped_column(Text)
     # Why this version exists. Required: the audit trail must say why a rule changed.
     change_reason: Mapped[str] = mapped_column(Text)
     # Who made the change. Empty until users exist (Feature 14); then required.
@@ -195,6 +217,29 @@ class ComplianceRuleVersion(Base):
     )
 
     rule: Mapped[ComplianceRule] = relationship(back_populates="versions")
+
+
+class RuleDraft(Base):
+    """QA's plain-language policy and what the system proposes to make of it.
+
+    Kept on the server so that what QA signs is exactly what was validated and
+    read back to them. Nothing here is in force until it is confirmed.
+    """
+
+    __tablename__ = "rule_drafts"
+    __table_args__ = (
+        enum_check("status", RuleDraftStatus),
+        CheckConstraint("(status = 'confirmed') = (confirmed_at IS NOT NULL)", name="confirmed_fields_together"),
+    )
+
+    source_text: Mapped[str] = mapped_column(Text)
+    # One entry per rule found in the text: see src/compliance/drafting.py.
+    items: Mapped[list[dict[str, Any]]] = mapped_column(JSONB)
+    status: Mapped[RuleDraftStatus] = mapped_column(
+        string_enum(RuleDraftStatus), default=RuleDraftStatus.OPEN, server_default=RuleDraftStatus.OPEN.value
+    )
+    created_by_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"), index=True)
+    confirmed_at: Mapped[datetime | None]
 
 
 class ComplianceFinding(Base):
@@ -223,9 +268,16 @@ class ComplianceFinding(Base):
             unique=True,
             postgresql_where=text("NOT resolved AND component_id IS NOT NULL"),
         ),
-        # About exactly one thing: a document, or a component as a whole
+        Index(
+            "uq_compliance_findings_open_vendor_rule",
+            "vendor_id",
+            "rule_code",
+            unique=True,
+            postgresql_where=text("NOT resolved AND vendor_id IS NOT NULL"),
+        ),
+        # About exactly one thing: a document, or a component or vendor as a whole
         # ("no Quality Certificate" isn't about any one document).
-        CheckConstraint("(document_id IS NULL) <> (component_id IS NULL)", name="one_subject"),
+        CheckConstraint("num_nonnulls(document_id, component_id, vendor_id) = 1", name="one_subject"),
         CheckConstraint("resolved = (resolved_at IS NOT NULL)", name="resolved_fields_together"),
         enum_check("status", ComplianceStatus),
         enum_check("severity", FindingSeverity),
@@ -238,6 +290,7 @@ class ComplianceFinding(Base):
     component_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("components.id", ondelete="RESTRICT"), index=True
     )
+    vendor_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("vendors.id", ondelete="RESTRICT"), index=True)
     # Which rule produced this, e.g. "TECHNICAL_SUPPORT_BULLETIN_AGE".
     rule_code: Mapped[str]
     # The exact rule settings that produced it.

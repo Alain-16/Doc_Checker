@@ -29,6 +29,8 @@ def alert_subject(session: Session, alert: Alert) -> tuple[uuid.UUID | None, uui
     """(component id, vendor id) an alert is about, whatever it is attached to."""
     if alert.component_id:
         return alert.component_id, session.get(Component, alert.component_id).vendor_id
+    if alert.vendor_id:
+        return None, alert.vendor_id
     if alert.document_id:
         document = session.get(Document, alert.document_id)
         return document.component_id, document.vendor_id

@@ -16,6 +16,9 @@ from src.models.audit import SignatureMeaning
 # Left out of the fingerprint: set by the database after signing, or the link
 # to the signature itself (which can't be part of what it signs).
 NOT_FINGERPRINTED = frozenset({"created_at", "updated_at", "signature_id"})
+# Columns added after records were signed: covered once they hold a value, but
+# left out while empty, so what was signed before they existed still matches.
+FINGERPRINTED_WHEN_SET = frozenset({"source_text"})
 
 
 class SignatureError(Exception):
@@ -32,6 +35,7 @@ def record_fingerprint(record: Any) -> str:
         attribute.key: jsonable(getattr(record, attribute.key))
         for attribute in inspect(record).mapper.column_attrs
         if attribute.key not in NOT_FINGERPRINTED
+        and not (attribute.key in FINGERPRINTED_WHEN_SET and getattr(record, attribute.key) is None)
     }
     return hashlib.sha256(json.dumps(values, sort_keys=True, default=str).encode()).hexdigest()
 

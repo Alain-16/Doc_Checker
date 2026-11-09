@@ -5,6 +5,7 @@ from src.models.compliance import (
     ComplianceRuleVersion,
     DocumentAttribute,
     KeyAttribute,
+    RuleDraft,
 )
 from src.models.document import Document, DocumentDate, DocumentType
 from src.models.vendor import Component, OwnerAssignment, Vendor
@@ -36,6 +37,7 @@ __all__ = [
     "ElectronicSignature",
     "IndustryProfile",
     "KeyAttribute",
+    "RuleDraft",
     "OwnerAssignment",
     "Page",
     "ReviewItem",

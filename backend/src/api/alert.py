@@ -51,6 +51,7 @@ class AlertOut(BaseModel):
     audience_role: UserRole
     document_id: uuid.UUID | None
     component_id: uuid.UUID | None
+    vendor_id: uuid.UUID | None
     vendor_file_id: uuid.UUID | None
     finding_id: uuid.UUID | None
     created_at: datetime

@@ -7,23 +7,22 @@ go stale as time passes), and after any rule change.
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 
-from sqlalchemy import and_, or_, select
+from sqlalchemy import ColumnElement, and_, or_, select
 from sqlalchemy.orm import Session, selectinload
 
 from src.review.raising import refresh_alerts
 
-from src.compliance.rule_kinds import (
-    RULE_KINDS,
+from src.compliance.facts import (
     AttributeFact,
-    ComponentDocument,
-    ComponentFacts,
     DateFact,
     DocumentFacts,
+    GroupDocument,
+    GroupFacts,
     Outcome,
     ReviewFact,
-    RuleKindSpec,
     RuleParameters,
 )
+from src.compliance.rule_kinds import RULE_KINDS, RuleKindSpec
 from src.models import (
     ComplianceFinding,
     ComplianceRule,
@@ -34,9 +33,10 @@ from src.models import (
     DocumentDate,
     DocumentType,
     ReviewItem,
+    Vendor,
     VendorFile,
 )
-from src.models.compliance import RuleKind
+from src.models.compliance import RuleKind, RuleLevel
 from src.models.document import ComplianceStatus
 from src.models.review import ReviewStatus
 from src.models.vendor_file import ProcessingStatus
@@ -78,7 +78,7 @@ def rules_for_document(rules: list[ActiveRule], document: Document) -> list[Acti
     """
     applicable = [
         r for r in rules
-        if r.spec.level == "document" and r.rule.document_type_id in (None, document.document_type_id)
+        if r.rule.level == RuleLevel.DOCUMENT and r.rule.document_type_id in (None, document.document_type_id)
     ]
     has_typed_age = any(r.rule.kind == RuleKind.DOCUMENT_AGE and r.rule.document_type_id for r in applicable)
     if has_typed_age:
@@ -121,28 +121,45 @@ def document_facts(session: Session, document: Document) -> DocumentFacts:
             DateFact(d.date_type, d.date_value, d.page_number, d.original_text, d.is_document_date) for d in dates
         ],
         attributes={
-            a.key_attribute.name: AttributeFact(a.key_attribute.name, a.key_attribute.display_name, a.value, a.page_number)
+            a.key_attribute.name: AttributeFact(
+                a.key_attribute.name, a.key_attribute.display_name, a.value, a.page_number,
+                a.key_attribute.required, a.evidence_snippet,
+            )
             for a in attributes
         },
         open_reviews=[ReviewFact(r.item_kind, r.reason, r.page_number) for r in reviews],
     )
 
 
-def component_facts(session: Session, component: Component) -> ComponentFacts:
+def group_facts(session: Session, name: str, belongs: ColumnElement[bool]) -> GroupFacts:
     labels = dict(session.execute(select(DocumentType.name, DocumentType.display_name)).all())
     documents = session.scalars(
-        select(Document)
-        .where(Document.component_id == component.id)
-        .options(selectinload(Document.document_type))
+        select(Document).where(belongs).options(selectinload(Document.document_type))
     ).all()
     current, superseded_types = [], {}
     for document in documents:
         type_name = document.document_type.name if document.document_type else "unknown"
         if document.superseded_by_id is None:
-            current.append(ComponentDocument(type_name, labels.get(type_name, type_name), document.compliance_status, document.title))
+            current.append(
+                GroupDocument(
+                    type_name, labels.get(type_name, type_name), document.compliance_status, document.title,
+                    document_facts(session, document),
+                )
+            )
         else:
             superseded_types[type_name] = labels.get(type_name, type_name)
-    return ComponentFacts(component.name, current, superseded_types, labels)
+    return GroupFacts(name, current, superseded_types, labels)
+
+
+def component_facts(session: Session, component: Component) -> GroupFacts:
+    """Its own documents, plus its vendor's company-level ones."""
+    company_level = and_(Document.vendor_id == component.vendor_id, Document.component_id.is_(None))
+    return group_facts(session, component.name, or_(Document.component_id == component.id, company_level))
+
+
+def vendor_facts(session: Session, vendor: Vendor) -> GroupFacts:
+    """Every document of the vendor, whichever component it is about."""
+    return group_facts(session, vendor.name, Document.vendor_id == vendor.id)
 
 
 # =============================================================================
@@ -161,7 +178,7 @@ def open_findings(session: Session, subject_column, subject_id) -> dict[str, Com
 
 def record_outcomes(
     session: Session,
-    subject: dict,  # {"document_id": ...} or {"component_id": ...}
+    subject: dict,  # {"document_id": ...}, {"component_id": ...} or {"vendor_id": ...}
     results: list[tuple[ActiveRule, Outcome | None]],
     now: datetime,
 ) -> None:
@@ -248,11 +265,19 @@ def evaluate_component(session: Session, component: Component, rules: list[Activ
     """Run after the component's documents: "no current bulletin" needs their new statuses."""
     session.flush()
     facts = component_facts(session, component)
-    results = [(a, a.spec.check(facts, a.parameters, today)) for a in rules if a.spec.level == "component"]
+    results = [(a, a.spec.check(facts, a.parameters, today)) for a in rules if a.rule.level == RuleLevel.COMPONENT]
     record_outcomes(session, {"component_id": component.id}, results, now)
 
 
-def evaluate(session: Session, documents: list[Document], components: list[Component]) -> None:
+def evaluate_vendor(session: Session, vendor: Vendor, rules: list[ActiveRule], today: date, now: datetime) -> None:
+    """Run after its documents, for the same reason."""
+    session.flush()
+    facts = vendor_facts(session, vendor)
+    results = [(a, a.spec.check(facts, a.parameters, today)) for a in rules if a.rule.level == RuleLevel.VENDOR]
+    record_outcomes(session, {"vendor_id": vendor.id}, results, now)
+
+
+def evaluate(session: Session, documents: list[Document], components: list[Component], vendors: list[Vendor]) -> None:
     rules = active_rules(session)
     now = datetime.now(UTC)
     today = now.date()
@@ -260,6 +285,8 @@ def evaluate(session: Session, documents: list[Document], components: list[Compo
         evaluate_document(session, document, rules, today, now)
     for component in components:
         evaluate_component(session, component, rules, today, now)
+    for vendor in vendors:
+        evaluate_vendor(session, vendor, rules, today, now)
 
     session.flush()
     refresh_alerts(session, now)
@@ -267,38 +294,43 @@ def evaluate(session: Session, documents: list[Document], components: list[Compo
 
 def evaluate_compliance(session: Session, vendor_file: VendorFile) -> None:
     """Pipeline stage: judge this file's documents, every other document of the
-    components they belong to, then those components.
+    vendors they belong to, then those vendors and their components.
 
-    All the components' documents, not just this file's: if a document here
+    All the vendors' documents, not just this file's: if a document here
     superseded an older one, the older one's findings must resolve now, in the
-    same run, not stay open.
+    same run, not stay open. A company-level document can change the outcome
+    for any component of its vendor, so all of them are judged.
     """
     own_documents = session.scalars(select(Document).where(Document.vendor_file_id == vendor_file.id)).all()
-    # Documents still waiting for identification have no component: only they are judged.
-    component_ids = {d.component_id for d in own_documents if d.component_id is not None}
+    # Documents still waiting for identification have no vendor: only they are judged.
+    vendor_ids = {d.vendor_id for d in own_documents if d.vendor_id is not None}
 
     other_documents = session.scalars(
         select(Document)
         .join(VendorFile, Document.vendor_file_id == VendorFile.id)
         .where(
-            Document.component_id.in_(component_ids),
+            Document.vendor_id.in_(vendor_ids),
             VendorFile.id != vendor_file.id,
             # This file is still "running" (this is its last stage); the others
             # must have finished processing.
             VendorFile.processing_status == ProcessingStatus.COMPLETED,
         )
-    ).all() if component_ids else []
-    components = [session.get(Component, component_id) for component_id in sorted(component_ids)]
-    evaluate(session, [*own_documents, *other_documents], components)
+    ).all() if vendor_ids else []
+    vendors = session.scalars(select(Vendor).where(Vendor.id.in_(vendor_ids)).order_by(Vendor.id)).all()
+    components = session.scalars(
+        select(Component).where(Component.vendor_id.in_(vendor_ids)).order_by(Component.id)
+    ).all()
+    evaluate(session, [*own_documents, *other_documents], list(components), list(vendors))
 
 
 def evaluate_everything(session: Session) -> int:
-    """Re-judge every processed document and every component. Returns how many documents."""
+    """Re-judge every processed document, component and vendor. Returns how many documents."""
     documents = session.scalars(
         select(Document)
         .join(VendorFile, Document.vendor_file_id == VendorFile.id)
         .where(VendorFile.processing_status == ProcessingStatus.COMPLETED)
     ).all()
     components = session.scalars(select(Component)).all()
-    evaluate(session, list(documents), list(components))
+    vendors = session.scalars(select(Vendor)).all()
+    evaluate(session, list(documents), list(components), list(vendors))
     return len(documents)
