@@ -1,4 +1,30 @@
-name: doc-checker
+name: doc-checker-app
+
+# Every setting the backend reads (src/config/settings.py), for all four
+# backend containers. Values come from .env; only the addresses are fixed.
+x-backend-env: &backend-env
+  APP_ENV: ${APP_ENV:?set APP_ENV in .env}
+  APP_BASE_URL: ${APP_BASE_URL:-http://localhost:3000}
+  DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+  REDIS_URL: redis://redis:6379/0
+  S3_ENDPOINT_URL: http://object-storage:8333
+  S3_REGION: ${S3_REGION:?set S3_REGION in .env}
+  S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:?set S3_ACCESS_KEY_ID in .env}
+  S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:?set S3_SECRET_ACCESS_KEY in .env}
+  S3_ORIGINALS_BUCKET: ${S3_ORIGINALS_BUCKET:?set S3_ORIGINALS_BUCKET in .env}
+  OPENAI_API_KEY: ${OPENAI_API_KEY:?set OPENAI_API_KEY in .env}
+  MFA_ENCRYPTION_KEY: ${MFA_ENCRYPTION_KEY:?set MFA_ENCRYPTION_KEY in .env}
+  DEFAULT_ADMIN_NAME: ${DEFAULT_ADMIN_NAME:-}
+  DEFAULT_ADMIN_EMAIL: ${DEFAULT_ADMIN_EMAIL:-}
+  DEFAULT_ADMIN_PASSWORD: ${DEFAULT_ADMIN_PASSWORD:-}
+  EMAIL_BACKEND: ${EMAIL_BACKEND:-console}
+  EMAIL_SENDER: ${EMAIL_SENDER:-no-reply@doc-checker.local}
+
+# Built once, used by migrate, api, worker and beat.
+x-backend: &backend
+  image: doc-checker-backend:latest
+  environment: *backend-env
+  restart: unless-stopped
 
 services:
   postgres:
@@ -7,8 +33,6 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER in .env}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
       POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB in .env}
-    ports:
-      - "127.0.0.1:${POSTGRES_PORT:-5433}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -16,11 +40,12 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+    restart: unless-stopped
 
   redis:
     image: redis:8.8-alpine
-    ports:
-      - "127.0.0.1:${REDIS_PORT:-6380}:6379"
+    # appendonly: queued jobs survive a Redis restart.
+    command: redis-server --appendonly yes
     volumes:
       - redis_data:/data
     healthcheck:
@@ -28,12 +53,17 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+    restart: unless-stopped
 
   object-storage:
     image: chrislusf/seaweedfs:4.48
-    command: server -dir=/data -s3 -s3.port=8333 -master.volumeSizeLimitMB=128 -volume.max=50
-    ports:
-      - "127.0.0.1:${S3_PORT:-8333}:8333"
+    command: >
+      server -dir=/data -s3 -s3.port=8333
+      -s3.config=/etc/seaweedfs/s3.json
+      -master.volumeSizeLimitMB=128 -volume.max=50
+    configs:
+      - source: s3_identities
+        target: /etc/seaweedfs/s3.json
     volumes:
       - object_storage_data:/data
     healthcheck:
@@ -48,47 +78,100 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
+    restart: unless-stopped
 
-  # Celery worker: processes uploaded vendor files (the whole pipeline), re-evaluates
-  # compliance after rule changes, reads documents for new key attributes, sends alerts.
-  # The API (run on your machine) queues jobs in the same Redis; this picks them up.
-  worker:
+  # One-shot: bring the schema up to date and make sure the bucket exists.
+  # Runs on every `up`; both steps do nothing when there is nothing to do.
+  migrate:
+    <<: *backend
     build: ./backend
-    image: doc-checker-backend
-    command: celery -A src.workers.celery_app:celery_app worker --loglevel=INFO --concurrency=${WORKER_CONCURRENCY:-2}
-    env_file: .env
-    environment: &backend-services
-      # Inside the compose network the services are reached by name, not localhost.
-      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
-      REDIS_URL: redis://redis:6379/0
-      S3_ENDPOINT_URL: http://object-storage:8333
-    volumes:
-      # Your code, live: restart the worker after changing it (`docker compose ... restart worker`).
-      - ./backend/src:/app/src:ro
+    command: sh -c "alembic upgrade head && python -m src.ingestion.storage"
+    restart: "no"
     depends_on:
       postgres:
         condition: service_healthy
+      object-storage:
+        condition: service_healthy
+
+  api:
+    <<: *backend
+    command: fastapi run src/main.py --port 8000 --workers ${API_WORKERS:-2}
+    # Published on 127.0.0.1 only, for /docs and scripts. The browser goes
+    # through the frontend, never straight to the API.
+    ports:
+      - "127.0.0.1:${API_PORT:-8000}:8000"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8000/openapi.json')",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
-      object-storage:
+
+  # Processes uploaded vendor files (the whole pipeline), re-evaluates
+  # compliance after rule changes, fills in new key attributes, sends alerts.
+  worker:
+    <<: *backend
+    command: celery -A src.workers.celery_app:celery_app worker --loglevel=INFO --concurrency=${WORKER_CONCURRENCY:-2}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+  # Queues the scheduled jobs (02:00 re-evaluation, hourly follow-up,
+  # 5-minute alert emails, 07:00 digest). Exactly ONE beat, or jobs run twice.
+  beat:
+    <<: *backend
+    command: celery -A src.workers.celery_app:celery_app beat --loglevel=INFO --schedule=/tmp/celerybeat-schedule
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        # Baked into the /api/* rewrite at build time (see next.config.ts).
+        BACKEND_URL: http://api:8000
+    image: doc-checker-frontend:latest
+    ports:
+      - "${FRONTEND_PORT:-3000}:3000"
+    depends_on:
+      api:
         condition: service_healthy
     restart: unless-stopped
 
-  # Celery Beat: queues the scheduled jobs (nightly re-evaluation at 02:00 UTC,
-  # hourly alert follow-up, alert emails every 5 minutes, daily digest at 07:00 UTC).
-  beat:
-    image: doc-checker-backend
-    command: celery -A src.workers.celery_app:celery_app beat --loglevel=INFO --schedule=/tmp/celerybeat-schedule
-    env_file: .env
-    environment: *backend-services
-    volumes:
-      - ./backend/src:/app/src:ro
-    depends_on:
-      redis:
-        condition: service_healthy
-      worker:
-        condition: service_started
-    restart: unless-stopped
+configs:
+  # SeaweedFS S3 identities: only the backend's key, built from .env.
+  s3_identities:
+    content: |
+      {
+        "identities": [
+          {
+            "name": "doc-checker",
+            "credentials": [
+              {
+                "accessKey": "${S3_ACCESS_KEY_ID}",
+                "secretKey": "${S3_SECRET_ACCESS_KEY}"
+              }
+            ],
+            "actions": ["Admin", "Read", "Write", "List", "Tagging"]
+          }
+        ]
+      }
 
 volumes:
   postgres_data:

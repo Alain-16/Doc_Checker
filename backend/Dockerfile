@@ -35,4 +35,4 @@ COPY src ./src
 RUN useradd --create-home --uid 1000 app && chown -R app /opt/tiktoken
 USER app
 
-CMD ["celery", "-A", "src.workers.celery_app:celery_app", "worker", "--loglevel=INFO"]
+CMD ["fastapi", "run", "src/main.py", "--port", "8000"] 

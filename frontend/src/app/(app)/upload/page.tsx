@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ProcessingSteps } from "@/components/processing-steps";
 import { Badge } from "@/components/ui/badge";
 import { Page, PageHeader } from "@/components/ui/page";
@@ -37,6 +37,17 @@ export default function UploadPage() {
   const [current, setCurrent] = useState<Recent | null>(null);
   const [storedRecent, setStoredRecent] = useStored(RECENT_KEY);
   const recent = parseRecent(storedRecent);
+  const forget = useCallback(
+    (id: string) => {
+      // Read the latest list, not this render's copy: several rows can go missing at once.
+      let raw: string | null = null;
+      try {
+        raw = localStorage.getItem(RECENT_KEY);
+      } catch {}
+      setStoredRecent(JSON.stringify(parseRecent(raw).filter((x) => x.id !== id)));
+    },
+    [setStoredRecent],
+  );
 
   const status = useFileStatus(current?.id ?? null, true);
   const s = status.data;
@@ -209,7 +220,7 @@ export default function UploadPage() {
       <section className="card overflow-hidden">
         <div className="border-b border-line px-4 py-3 font-semibold">Recent uploads (this browser)</div>
         {recent.map((r) => (
-          <RecentRow key={r.id} item={r} />
+          <RecentRow key={r.id} item={r} onMissing={forget} />
         ))}
         {!recent.length && <div className="px-4 py-3 text-muted">Files you upload here are listed with their processing status.</div>}
       </section>
@@ -285,9 +296,14 @@ function Results({ componentIds }: { componentIds: string[] }) {
   );
 }
 
-function RecentRow({ item }: { item: Recent }) {
+function RecentRow({ item, onMissing }: { item: Recent; onMissing: (id: string) => void }) {
   const status = useFileStatus(item.id, true);
   const s = status.data;
+  // Remembered by this browser but gone from the database (e.g. a new or reset database).
+  const missing = status.error instanceof ApiError && status.error.status === 404;
+  useEffect(() => {
+    if (missing) onMissing(item.id);
+  }, [missing, item.id, onMissing]);
   const key = s ? (s.status === "completed" ? "complete" : s.status) : null;
   return (
     <Link

@@ -1,0 +1,14 @@
+FRONTEND_DOCKERIGNORE = r'''
+node_modules
+.next
+out
+coverage
+*.tsbuildinfo
+next-env.d.ts
+.env*
+.git
+Dockerfile
+.dockerignore
+npm-debug.log*
+.pnpm-debug.log*
+'''

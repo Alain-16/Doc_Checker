@@ -105,7 +105,10 @@ export function useFileStatus(id: string | null, poll: boolean) {
     queryKey: keys.fileStatus(id ?? "none"),
     queryFn: () => call(api.GET("/vendor-files/{vendor_file_id}/status", { params: { path: { vendor_file_id: id! } } })),
     enabled: !!id,
+    // A file that doesn't exist (404) won't appear by asking again.
+    retry: (count, error) => !(error instanceof ApiError && error.status === 404) && count < 3,
     refetchInterval: (query) => {
+      if (query.state.status === "error") return false;
       const status = query.state.data?.status;
       return poll && (status === "queued" || status === "running" || !status) ? 2000 : false;
     },
