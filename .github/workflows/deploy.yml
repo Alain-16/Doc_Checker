@@ -1,0 +1,137 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Rollback: full commit SHA that was deployed before. Empty = build and deploy this branch."
+        required: false
+        default: ""
+
+# Deploys queue up one after another; a running deploy is never cancelled.
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  REGISTRY: ghcr.io/alain-16
+  APP_DIR: /opt/doc-checker
+
+jobs:
+  ci:
+    # Skipped for a rollback: those images passed CI when they were built.
+    if: ${{ !inputs.image_tag }}
+    uses: ./.github/workflows/CI.yml
+
+  build:
+    needs: ci
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write # push to ghcr.io with GITHUB_TOKEN
+    strategy:
+      matrix:
+        include:
+          - image: backend
+            build-args: ""
+          - image: frontend
+            # Baked into the /api/* rewrite. 8000 = the API's port INSIDE its container.
+            build-args: BACKEND_URL=http://api:8000
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push ${{ matrix.image }}
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.image }}
+          build-args: ${{ matrix.build-args }}
+          push: true
+          tags: ${{ env.REGISTRY }}/doc-checker-${{ matrix.image }}:${{ github.sha }}
+          # source links the package to this repo (so this repo's GITHUB_TOKEN
+          # may pull it); deploy.sh's image prune also filters on it.
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          # Same cache scopes as CI's docker job → most layers are reused.
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,scope=${{ matrix.image }},mode=max
+
+  deploy:
+    needs: build
+    # Run when build succeeded, or was skipped because this is a rollback.
+    # Not when CI or build failed, not when the run was cancelled.
+    if: ${{ !cancelled() && !failure() }}
+    runs-on: ubuntu-24.04
+    # Unlocks the VPS_* secrets (environment limited to main in Unit 3).
+    environment: production
+    permissions:
+      contents: read
+      packages: read # the VPS pulls with this job's GITHUB_TOKEN
+    env:
+      IMAGE_TAG: ${{ inputs.image_tag || github.sha }}
+    steps:
+      # Compose file + deploy.sh from the commit being deployed (matters for rollbacks).
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ env.IMAGE_TAG }}
+
+      - name: SSH access to the VPS
+        env:
+          SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_PORT: ${{ secrets.VPS_PORT }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+        run: |
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          # The VPS's real host key (Unit 3, step 3d): a server pretending to
+          # be your VPS is refused instead of receiving your token.
+          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+          cat > ~/.ssh/config <<EOF
+          Host vps
+            HostName $VPS_HOST
+            Port ${VPS_PORT:-22}
+            User $VPS_USER
+            IdentityFile ~/.ssh/deploy_key
+            IdentitiesOnly yes
+            StrictHostKeyChecking yes
+            ConnectTimeout 15
+          EOF
+
+      - name: Copy compose file and deploy script
+        run: scp docker-compose.prod.yaml deploy/deploy.sh "vps:$APP_DIR/"
+
+      # GITHUB_TOKEN expires when this job ends, so nothing long-lived is left
+      # on the VPS. --password-stdin keeps it out of the process list.
+      - name: Log the VPS in to ghcr.io
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: printf '%s' "$GHCR_TOKEN" | ssh vps "docker login ghcr.io -u '${{ github.actor }}' --password-stdin"
+
+      - name: Deploy ${{ env.IMAGE_TAG }}
+        run: ssh vps "bash $APP_DIR/deploy.sh $IMAGE_TAG"
+
+      - name: Log the VPS out of ghcr.io
+        if: always()
+        run: ssh vps "docker logout ghcr.io" || true
+
+      - name: Summary
+        if: success()
+        run: |
+          echo "### Deployed \`$IMAGE_TAG\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "Roll back: Actions → Deploy → Run workflow → paste a previous SHA." >> "$GITHUB_STEP_SUMMARY"
