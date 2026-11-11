@@ -6,8 +6,8 @@ from sqlalchemy.orm import Session
 
 from src.auth.signatures import sign
 from src.models import AlertPolicy, User
-from src.models.audit import SignatureMeaning
 from src.models.alert import AlertEvent
+from src.models.audit import SignatureMeaning
 from src.models.document import ComplianceStatus
 from src.models.user import UserRole
 

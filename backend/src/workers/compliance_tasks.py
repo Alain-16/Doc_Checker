@@ -7,7 +7,11 @@ from src.compliance.evaluation import evaluate_everything
 from src.config.database import SessionLocal
 from src.extraction.key_attributes import documents_missing, fill_in_file
 from src.models import KeyAttribute
-from src.workers.celery_app import EVALUATE_ALL_COMPLIANCE_TASK, FILL_IN_ATTRIBUTES_TASK, celery_app
+from src.workers.celery_app import (
+    EVALUATE_ALL_COMPLIANCE_TASK,
+    FILL_IN_ATTRIBUTES_TASK,
+    celery_app,
+)
 
 logger = logging.getLogger(__name__)
 

@@ -6,6 +6,20 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
 from src.industry.profile import current_profile
+from src.models import (
+    Alert,
+    AlertPolicy,
+    ComplianceFinding,
+    Component,
+    Document,
+    ReviewItem,
+    Vendor,
+    VendorFile,
+)
+from src.models.alert import AlertEvent, AlertStatus, DeliveryKind
+from src.models.compliance import FindingSeverity
+from src.models.document import ComplianceStatus
+from src.models.review import ReviewStatus
 from src.review.notifications import notify
 from src.review.policies import (
     ComingDueParameters,
@@ -14,11 +28,6 @@ from src.review.policies import (
     current_policies,
     parameters_of,
 )
-from src.models import Alert, AlertPolicy, ComplianceFinding, Component, Document, ReviewItem, Vendor, VendorFile
-from src.models.alert import AlertEvent, AlertStatus, DeliveryKind
-from src.models.compliance import FindingSeverity
-from src.models.document import ComplianceStatus
-from src.models.review import ReviewStatus
 
 STATUS_SEVERITY = {
     ComplianceStatus.CURRENT: 0,

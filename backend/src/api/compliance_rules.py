@@ -7,7 +7,12 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
-from src.auth.dependencies import POLICY_EDITORS, confirm_signature_or_401, current_user, require_role
+from src.auth.dependencies import (
+    POLICY_EDITORS,
+    confirm_signature_or_401,
+    current_user,
+    require_role,
+)
 from src.compliance.rule_kinds import RULE_KINDS
 from src.compliance.rules import RuleError, create_rule, update_rule
 from src.config.database import get_session

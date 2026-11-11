@@ -32,9 +32,21 @@ from src.compliance.rule_kinds import (
     RevisionWithoutReplacementParameters,
     RuleParameters,
 )
-from src.models import ComplianceRule, ComplianceRuleVersion, DocumentType, KeyAttribute, User
+from src.models import (
+    ComplianceRule,
+    ComplianceRuleVersion,
+    DocumentType,
+    KeyAttribute,
+    User,
+)
 from src.models.audit import SignatureMeaning
-from src.models.compliance import AttributeValueType, FindingSeverity, RuleKind, RuleLevel, StatusValue
+from src.models.compliance import (
+    AttributeValueType,
+    FindingSeverity,
+    RuleKind,
+    RuleLevel,
+    StatusValue,
+)
 
 # "COMPLIANCE_BULLETIN_AGE": capitals, digits, underscores.
 RULE_CODE = re.compile(r"^[A-Z][A-Z0-9_]{2,63}$")

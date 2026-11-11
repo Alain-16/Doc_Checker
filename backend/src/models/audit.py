@@ -4,11 +4,10 @@ from enum import StrEnum
 from typing import Any
 
 from sqlalchemy import CheckConstraint, ForeignKey, Index, String, Text, func
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from src.models.base import Base, enum_check, string_enum
-from sqlalchemy.dialects.postgresql import JSONB
-
 
 # Length of a SHA-256 hash written as hexadecimal text.
 SHA256_HEX_LENGTH = 64

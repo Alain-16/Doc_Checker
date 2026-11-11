@@ -4,13 +4,13 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from src.audit.trail import set_audit_reason
+from src.auth.email import send_email
 from src.auth.passwords import check_password_rules, hash_password
 from src.auth.session import end_all_sessions
 from src.auth.tokens import new_token, token_hash
 from src.config.settings import get_settings
 from src.models import AccountToken, User
 from src.models.user import SessionEndReason, TokenPurpose, UserRole
-from src.auth.email import send_email
 
 INVITE_VALID_FOR = timedelta(days=3)
 RESET_VALID_FOR = timedelta(hours=1)

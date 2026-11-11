@@ -4,7 +4,13 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from src.audit.trail import set_actor, set_audit_reason
-from src.auth.mfa import code_is_valid, decrypt_secret, encrypt_secret, new_secret, setup_link
+from src.auth.mfa import (
+    code_is_valid,
+    decrypt_secret,
+    encrypt_secret,
+    new_secret,
+    setup_link,
+)
 from src.auth.passwords import password_matches
 from src.auth.session import end_all_sessions, start_session
 from src.config.settings import get_settings

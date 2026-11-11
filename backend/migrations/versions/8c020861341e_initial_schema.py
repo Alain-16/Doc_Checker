@@ -5,19 +5,19 @@ Revises:
 Create Date: 2026-10-14 18:10:21.673644
 
 """
-from typing import Sequence, Union
 import uuid
+from collections.abc import Sequence
 
-from alembic import op
 import pgvector.sqlalchemy
 import sqlalchemy as sa
+from alembic import op
 from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
 revision: str = '8c020861341e'
-down_revision: Union[str, Sequence[str], None] = None
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | Sequence[str] | None = None
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 APPEND_ONLY_TABLES = ("audit_events","electronic_signatures")
 

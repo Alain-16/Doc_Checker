@@ -14,11 +14,10 @@ from src.ingestion.page_reading import read_pages
 from src.ingestion.segmentation import segment_pages
 from src.ingestion.superseding import supersede_older_documents
 from src.models import VendorFile
+from src.models.vendor_file import ProcessingStatus
 from src.retrieval.indexing import chunk_documents, embed_chunks
 from src.vendors.identification import identify_vendor
-from src.models.vendor_file import ProcessingStatus
 from src.workers.celery_app import PROCESS_VENDOR_FILE_TASK, celery_app
-
 
 logger = logging.getLogger(__name__)
 

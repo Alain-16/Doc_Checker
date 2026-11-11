@@ -7,7 +7,6 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from src.models.chunk import ChunkingStrategy
 
-
 ENV_FILE = Path(__file__).resolve().parents[3] / ".env"
 
 

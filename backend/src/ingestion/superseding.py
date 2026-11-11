@@ -1,10 +1,17 @@
+import uuid
+
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
-import uuid
-
 from src.classification.classifier import UNKNOWN_TYPE
-from src.models import Component, Document, DocumentAttribute, KeyAttribute, Vendor, VendorFile
+from src.models import (
+    Component,
+    Document,
+    DocumentAttribute,
+    KeyAttribute,
+    Vendor,
+    VendorFile,
+)
 from src.vendors.identification import product_key
 
 # The core key attribute listing the items a document covers.

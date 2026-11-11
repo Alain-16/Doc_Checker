@@ -10,6 +10,7 @@ from src.models.base import EMPTY_JSONB, Base, enum_check, string_enum
 from src.models.compliance import FindingSeverity
 from src.models.user import User, UserRole
 
+
 class AlertEvent(StrEnum):
     """What can raise an alert. Each has exactly one policy (alert_policies)."""
 

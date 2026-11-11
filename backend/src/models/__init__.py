@@ -10,26 +10,28 @@ from src.models.compliance import (
 from src.models.document import Document, DocumentDate, DocumentType
 from src.models.vendor import Component, OwnerAssignment, Vendor
 from src.models.vendor_file import Page, VendorFile
-from .review import ReviewItem
-from .user import User, AccountToken, UserSession
-from .chunk import Chunk
+
+from .alert import Alert, AlertDelivery, AlertPolicy
 from .audit import AuditEvent, ElectronicSignature
-from .alert import Alert,AlertDelivery, AlertPolicy
-from .copilot import Conversation,Message,QueryLog
+from .chunk import Chunk
+from .copilot import Conversation, Message, QueryLog
 from .industry import IndustryProfile
+from .review import ReviewItem
+from .user import AccountToken, User, UserSession
+
 __all__ = [
-    "AuditEvent",
+    "AccountToken",
     "Alert",
     "AlertDelivery",
     "AlertPolicy",
-    "AccountToken",
-    "UserSession",
+    "AuditEvent",
     "Base",
     "Chunk",
     "ComplianceFinding",
     "ComplianceRule",
     "ComplianceRuleVersion",
     "Component",
+    "Conversation",
     "Document",
     "DocumentAttribute",
     "DocumentDate",
@@ -37,15 +39,15 @@ __all__ = [
     "ElectronicSignature",
     "IndustryProfile",
     "KeyAttribute",
-    "RuleDraft",
+    "Message",
     "OwnerAssignment",
     "Page",
+    "QueryLog",
     "ReviewItem",
+    "RuleDraft",
     "User",
+    "UserSession",
     "Vendor",
     "VendorFile",
-    "Conversation",
-    "Message",
-    "QueryLog",
 
 ]

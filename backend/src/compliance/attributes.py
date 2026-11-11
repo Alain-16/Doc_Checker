@@ -7,7 +7,11 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from src.classification.classifier import MERGE_SIMILARITY, most_similar_type, type_name_from
+from src.classification.classifier import (
+    MERGE_SIMILARITY,
+    most_similar_type,
+    type_name_from,
+)
 from src.compliance.rules import RuleError
 from src.models import DocumentType, KeyAttribute
 from src.models.compliance import AttributeGroup, AttributeValueType

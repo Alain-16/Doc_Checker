@@ -14,7 +14,6 @@ from src.models import Document, DocumentDate, Page, ReviewItem, VendorFile
 from src.models.document import DatePrecision, DateType, ResultMethod
 from src.models.review import ReviewItemKind
 
-
 MONTH_NAMES = [
     "january", "february", "march", "april", "may", "june",
     "july", "august", "september", "october", "november", "december",
@@ -48,19 +47,19 @@ LATEST_PLAUSIBLE_YEARS_AHEAD = 10
 CONTEXT_BEFORE_CHARS = 60  # where anchor words are searched
 SNIPPET_RADIUS_CHARS = 80  # evidence kept around each date
 ANCHORS: list[tuple[re.Pattern[str], DateType]] = [
-    (re.compile(r"manufactur|\bmfg\b|\bmfd\b", re.I), DateType.MANUFACTURING),
-    (re.compile(r"expir|\bexp\b|use by|best before|retest|valid (?:until|till|thru|through|to)", re.I), DateType.EXPIRY),
-    (re.compile(r"effective|valid from|in force from", re.I), DateType.EFFECTIVE),
-    (re.compile(r"docusigned|signed|signature|approved", re.I), DateType.SIGNATURE),
-    (re.compile(r"\brev(?:ision|ised)?\b", re.I), DateType.REVISION),
-    (re.compile(r"issued?|date of issue|release date", re.I), DateType.ISSUE),
+    (re.compile(r"manufactur|\bmfg\b|\bmfd\b", re.IGNORECASE), DateType.MANUFACTURING),
+    (re.compile(r"expir|\bexp\b|use by|best before|retest|valid (?:until|till|thru|through|to)", re.IGNORECASE), DateType.EXPIRY),
+    (re.compile(r"effective|valid from|in force from", re.IGNORECASE), DateType.EFFECTIVE),
+    (re.compile(r"docusigned|signed|signature|approved", re.IGNORECASE), DateType.SIGNATURE),
+    (re.compile(r"\brev(?:ision|ised)?\b", re.IGNORECASE), DateType.REVISION),
+    (re.compile(r"issued?|date of issue|release date", re.IGNORECASE), DateType.ISSUE),
 ]
 # Words that mean the date belongs to something the document merely mentions.
 REFERENCE_MARKERS = re.compile(
     r"supersed|replaces|previous|prior|according to|\bper\b|\b(?:EU|EC|EN|ISO|USP|ASTM|CFR|IEC|DIN|ADR|IMDG|IATA)\b|directive|regulation",
-    re.I,
+    re.IGNORECASE,
 )
-REVISION_HISTORY = re.compile(r"revision history|change history|document history", re.I)
+REVISION_HISTORY = re.compile(r"revision history|change history|document history", re.IGNORECASE)
 
 # --- Confidence and review ---
 RULES_CONFIDENCE = 0.95

@@ -15,7 +15,11 @@ from src.compliance.rules import RuleError
 from src.config.database import get_session
 from src.models import RuleDraft, User
 from src.models.compliance import RuleDraftStatus
-from src.workers.celery_app import EVALUATE_ALL_COMPLIANCE_TASK, FILL_IN_ATTRIBUTES_TASK, celery_app
+from src.workers.celery_app import (
+    EVALUATE_ALL_COMPLIANCE_TASK,
+    FILL_IN_ATTRIBUTES_TASK,
+    celery_app,
+)
 
 logger = logging.getLogger(__name__)
 

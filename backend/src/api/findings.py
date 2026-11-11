@@ -2,14 +2,19 @@ import uuid
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel
 from sqlalchemy import Select, select
 from sqlalchemy.orm import Session, aliased
 
 from src.api.documents import DocumentOut, FindingBrief, documents_by_id, finding_brief
 from src.auth.dependencies import current_user
 from src.config.database import get_session
-from src.models import ComplianceFinding, ComplianceRuleVersion, Component, Document, Vendor
+from src.models import (
+    ComplianceFinding,
+    ComplianceRuleVersion,
+    Component,
+    Document,
+    Vendor,
+)
 from src.models.compliance import FindingSeverity
 
 # Read-only: findings are opened and resolved by the rules engine, never by a click.

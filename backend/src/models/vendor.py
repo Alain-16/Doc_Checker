@@ -1,15 +1,14 @@
 import uuid
 from typing import TYPE_CHECKING
 
-from sqlalchemy import CheckConstraint, ForeignKey, Index, Text, UniqueConstraint, text
-from sqlalchemy.orm import Mapped, relationship, mapped_column
+from sqlalchemy import CheckConstraint, ForeignKey, Index, UniqueConstraint, text
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from .base import Base, EMPTY_TEXT_ARRAY
-
+from .base import EMPTY_TEXT_ARRAY, Base
 
 if TYPE_CHECKING:
-    from src.models.user import User
     from src.models.document import Document
+    from src.models.user import User
     
     
 

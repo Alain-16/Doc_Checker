@@ -1,10 +1,15 @@
 import logging
 from datetime import UTC, datetime
 
+from src.config.database import SessionLocal
 from src.review.follow_up import follow_up_alerts
 from src.review.sending import send_digests, send_immediate_emails
-from src.config.database import SessionLocal
-from src.workers.celery_app import FOLLOW_UP_ALERTS_TASK, SEND_ALERT_DIGESTS_TASK, SEND_ALERT_EMAILS_TASK, celery_app
+from src.workers.celery_app import (
+    FOLLOW_UP_ALERTS_TASK,
+    SEND_ALERT_DIGESTS_TASK,
+    SEND_ALERT_EMAILS_TASK,
+    celery_app,
+)
 
 logger = logging.getLogger(__name__)
 

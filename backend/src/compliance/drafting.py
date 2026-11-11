@@ -16,7 +16,11 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from src.audit.trail import set_audit_reason
-from src.compliance.attributes import AttributeSpec, add_document_type, add_key_attribute
+from src.compliance.attributes import (
+    AttributeSpec,
+    add_document_type,
+    add_key_attribute,
+)
 from src.compliance.conditions import Operator
 from src.compliance.evaluation import component_facts, document_facts, vendor_facts
 from src.compliance.readback import Names, read_back
@@ -36,7 +40,13 @@ from src.models import (
     Vendor,
     VendorFile,
 )
-from src.models.compliance import AttributeValueType, FindingSeverity, RuleDraftStatus, RuleKind, RuleLevel
+from src.models.compliance import (
+    AttributeValueType,
+    FindingSeverity,
+    RuleDraftStatus,
+    RuleKind,
+    RuleLevel,
+)
 from src.models.document import ComplianceStatus, DateType
 from src.models.vendor_file import ProcessingStatus
 

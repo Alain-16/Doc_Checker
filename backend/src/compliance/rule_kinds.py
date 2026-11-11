@@ -26,7 +26,6 @@ from src.models.compliance import RuleKind, RuleLevel
 from src.models.document import ComplianceStatus, DateType
 from src.models.review import ReviewItemKind
 
-
 # =============================================================================
 # Document-level kinds
 # =============================================================================
@@ -400,7 +399,7 @@ class ManualCheckParameters(RuleParameters):
 
 def check_manual(facts: Any, parameters: ManualCheckParameters, today: date) -> None:
     """Can't be judged from documents: recorded and signed, but never changes a status."""
-    return None
+    return
 
 
 # =============================================================================

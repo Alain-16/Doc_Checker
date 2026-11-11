@@ -10,8 +10,6 @@ from datetime import UTC, date, datetime
 from sqlalchemy import ColumnElement, and_, or_, select
 from sqlalchemy.orm import Session, selectinload
 
-from src.review.raising import refresh_alerts
-
 from src.compliance.facts import (
     AttributeFact,
     DateFact,
@@ -40,6 +38,7 @@ from src.models.compliance import RuleKind, RuleLevel
 from src.models.document import ComplianceStatus
 from src.models.review import ReviewStatus
 from src.models.vendor_file import ProcessingStatus
+from src.review.raising import refresh_alerts
 
 # Shown on a document a newer version replaced (it is no longer judged).
 SUPERSEDED_REASON = "Replaced by a newer version of this document; no longer evaluated."

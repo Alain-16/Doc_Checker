@@ -1,4 +1,9 @@
+import logging
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
+
 from .api import (
     alert,
     auth,
@@ -16,13 +21,8 @@ from .api import (
     vendor_files,
     vendors,
 )
-import logging
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
-
 from .auth.accounts import ensure_default_admin
 from .config.database import SessionLocal
-
 
 logger = logging.getLogger(__name__)
 

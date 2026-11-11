@@ -5,7 +5,12 @@ from pydantic import BaseModel, ConfigDict, EmailStr
 from sqlalchemy.orm import Session
 
 from src.audit.trail import set_audit_reason
-from src.auth.accounts import AccountError, accept_invite, request_password_reset, reset_password
+from src.auth.accounts import (
+    AccountError,
+    accept_invite,
+    request_password_reset,
+    reset_password,
+)
 from src.auth.dependencies import current_user, signing_in_session
 from src.auth.login import SignInError, sign_in, start_mfa_setup, verify_mfa_code
 from src.auth.passwords import PasswordRuleError

@@ -10,16 +10,16 @@ Revises: a4f2c9d81e60
 Create Date: 2026-11-03 22:00:00.000000
 
 """
-from typing import Sequence, Union
+from collections.abc import Sequence
 
-from alembic import op
 import sqlalchemy as sa
+from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = 'c3d5e7f90a12'
-down_revision: Union[str, Sequence[str], None] = 'a4f2c9d81e60'
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | Sequence[str] | None = 'a4f2c9d81e60'
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 # A copy of src/industry/profile.py's preset as of today: migrations must not
 # import application code, which keeps changing after they are written.

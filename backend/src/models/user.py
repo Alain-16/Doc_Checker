@@ -2,13 +2,10 @@ import uuid
 from datetime import datetime
 from enum import StrEnum
 
-from sqlalchemy import CheckConstraint, ForeignKey, text, true
-from sqlalchemy.orm import Mapped, mapped_column
-
-from src.models.base import Base, enum_check, string_enum
 from sqlalchemy import CheckConstraint, ForeignKey, String, text, true
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
+from src.models.base import Base, enum_check, string_enum
 
 
 class TokenPurpose(StrEnum):

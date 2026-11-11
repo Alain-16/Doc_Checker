@@ -2,8 +2,8 @@ from celery import Celery
 from celery.schedules import crontab
 from celery.signals import worker_process_init
 
-from src.config.settings import get_settings
 from src.config.database import engine
+from src.config.settings import get_settings
 
 # Task names are plain strings so the API can queue a job by name without
 # importing the pipeline (and with it PyMuPDF, OpenCV and Tesseract).

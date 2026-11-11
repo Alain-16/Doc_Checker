@@ -12,7 +12,6 @@ from src.llm.models import LlmTask, structured_llm
 from src.models import Component, DocumentType, Vendor
 from src.models.copilot import MessageRole
 
-
 HISTORY_MESSAGES = 6
 # A name shorter than this only matches as the whole name, never as part of a longer one.
 MIN_NAME_CHARS = 3

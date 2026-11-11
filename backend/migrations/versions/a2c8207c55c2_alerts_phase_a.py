@@ -5,19 +5,18 @@ Revises: fc561f9bd015
 Create Date: 2026-10-28 10:05:12.529798
 
 """
-from typing import Sequence, Union
 import uuid
+from collections.abc import Sequence
 
-from alembic import op
-import pgvector.sqlalchemy
 import sqlalchemy as sa
+from alembic import op
 from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
 revision: str = 'a2c8207c55c2'
-down_revision: Union[str, Sequence[str], None] = 'fc561f9bd015'
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | Sequence[str] | None = 'fc561f9bd015'
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 INITIAL_REASON = "Initial alert policies (Monitoring & Alerts Phase A, agreed 2026-10-28)."
 # (event, audience role, reminder days, escalate critical after, escalate others after, parameters)

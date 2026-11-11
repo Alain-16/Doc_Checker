@@ -8,15 +8,25 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
 from src.audit.trail import set_audit_reason
-from src.auth.dependencies import POLICY_EDITORS, confirm_signature_or_401, current_user, require_role
-from src.review.policies import PolicyError, current_policies, save_policy_version
-from src.review.raising import refresh_alerts
+from src.auth.dependencies import (
+    POLICY_EDITORS,
+    confirm_signature_or_401,
+    current_user,
+    require_role,
+)
 from src.config.database import get_session
 from src.models import Alert, AlertDelivery, AlertPolicy, User
-from src.models.alert import AlertEvent, AlertStatus, DeliveryChannel, DeliveryKind, DeliveryStatus
+from src.models.alert import (
+    AlertEvent,
+    AlertStatus,
+    DeliveryChannel,
+    DeliveryKind,
+    DeliveryStatus,
+)
 from src.models.compliance import FindingSeverity
 from src.models.user import UserRole
-
+from src.review.policies import PolicyError, current_policies, save_policy_version
+from src.review.raising import refresh_alerts
 
 # Everyone signed in sees and acknowledges alerts; policy changes need an editor's e-signature.
 router = APIRouter(tags=["alerts"], dependencies=[Depends(current_user)])

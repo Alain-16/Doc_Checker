@@ -41,3 +41,18 @@ build-backend = "uv_build"
 [tool.uv]
 package= false
 
+[dependency-groups]
+dev = [
+    "ruff>=0.17.4",
+]
+
+[tool.ruff]
+target-version = "py311"
+
+[tool.ruff.lint]
+# Pinned on purpose: ruff 0.17 turned on ~40 rule families by default
+# (bugbear, pyupgrade, ...), so a ruff upgrade would change what CI fails on.
+# E4/E7/E9/F = the classic set (unused/undefined names, syntax errors),
+# I = sorted imports (the code was sorted on 2026-11-10; --fix keeps it so).
+select = ["E4", "E7", "E9", "F", "I"]
+

@@ -5,18 +5,16 @@ Revises: 63e4457eabe8
 Create Date: 2026-10-28 13:42:03.795463
 
 """
-from typing import Sequence, Union
+from collections.abc import Sequence
 
-from alembic import op
-import pgvector.sqlalchemy
 import sqlalchemy as sa
-
+from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = '0ba5ce37999a'
-down_revision: Union[str, Sequence[str], None] = '63e4457eabe8'
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | Sequence[str] | None = '63e4457eabe8'
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 OLD_CHANNELS = ("in_app", "email")
 NEW_CHANNELS = (*OLD_CHANNELS, "digest")

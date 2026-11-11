@@ -6,10 +6,10 @@ from sqlalchemy.orm import Session
 
 from src.audit.trail import set_actor
 from src.auth.session import SESSION_COOKIE, end_session, find_session
+from src.auth.signatures import SignatureError, confirm_signing_password
 from src.config.database import get_session
 from src.models import User, UserSession
 from src.models.user import SessionEndReason, UserRole
-from src.auth.signatures import SignatureError, confirm_signing_password
 
 # Who may do what (PRD "Roles and Permissions", plus your decision of 2026-10-28
 # that Compliance Specialists may change rules and alert policies).

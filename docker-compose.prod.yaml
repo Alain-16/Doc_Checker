@@ -1,0 +1,191 @@
+name: doc-checker
+
+x-backend-env: &backend-env
+  APP_ENV: ${APP_ENV:?set APP_ENV in .env}
+  APP_BASE_URL: ${APP_BASE_URL:?set APP_BASE_URL in .env}
+  DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+  REDIS_URL: redis://redis:6379/0
+  S3_ENDPOINT_URL: http://object-storage:8333
+  S3_REGION: ${S3_REGION:?set S3_REGION in .env}
+  S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:?set S3_ACCESS_KEY_ID in .env}
+  S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:?set S3_SECRET_ACCESS_KEY in .env}
+  S3_ORIGINALS_BUCKET: ${S3_ORIGINALS_BUCKET:?set S3_ORIGINALS_BUCKET in .env}
+  OPENAI_API_KEY: ${OPENAI_API_KEY:?set OPENAI_API_KEY in .env}
+  MFA_ENCRYPTION_KEY: ${MFA_ENCRYPTION_KEY:?set MFA_ENCRYPTION_KEY in .env}
+  DEFAULT_ADMIN_NAME: ${DEFAULT_ADMIN_NAME:-}
+  DEFAULT_ADMIN_EMAIL: ${DEFAULT_ADMIN_EMAIL:-}
+  DEFAULT_ADMIN_PASSWORD: ${DEFAULT_ADMIN_PASSWORD:-}
+  EMAIL_BACKEND: ${EMAIL_BACKEND:-console}
+  EMAIL_SENDER: ${EMAIL_SENDER:-no-reply@doc-checker.local}
+
+# Keep at most 3 × 10 MB of logs per container (default: unlimited).
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+# migrate, api, worker and beat all run the same backend image.
+x-backend: &backend
+  image: ghcr.io/alain-16/doc-checker-backend:${IMAGE_TAG:?set IMAGE_TAG in .env}
+  environment: *backend-env
+  logging: *logging
+  restart: unless-stopped
+
+services:
+  postgres:
+    image: pgvector/pgvector:0.8.6-pg17
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB in .env}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    logging: *logging
+    restart: unless-stopped
+
+  redis:
+    image: redis:8.8-alpine
+    # appendonly: queued jobs survive a Redis restart.
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    logging: *logging
+    restart: unless-stopped
+
+  object-storage:
+    image: chrislusf/seaweedfs:4.48
+    command: >
+      server -dir=/data -s3 -s3.port=8333
+      -s3.config=/etc/seaweedfs/s3.json
+      -master.volumeSizeLimitMB=128 -volume.max=50
+    configs:
+      - source: s3_identities
+        target: /etc/seaweedfs/s3.json
+    volumes:
+      - object_storage_data:/data
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "wget",
+          "-q",
+          "--spider",
+          "http://localhost:9333/cluster/healthz",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    logging: *logging
+    restart: unless-stopped
+
+  # One-shot: schema up to date + bucket exists, then exits. api/worker/beat
+  # wait for it, so new code never runs against an old schema.
+  migrate:
+    <<: *backend
+    command: sh -c "alembic upgrade head && python -m src.ingestion.storage"
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      object-storage:
+        condition: service_healthy
+
+  # NOT published: the browser reaches it only through the frontend's /api/*
+  # rewrite. To run something against it:
+  #   docker compose -f docker-compose.prod.yaml exec api python -c "..."
+  api:
+    <<: *backend
+    command: fastapi run src/main.py --port 8000 --workers ${API_WORKERS:-2}
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://localhost:8000/openapi.json')"
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+  worker:
+    <<: *backend
+    command: celery -A src.workers.celery_app:celery_app worker --loglevel=INFO --concurrency=${WORKER_CONCURRENCY:-2}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+  # Exactly ONE beat, or scheduled jobs run twice.
+  beat:
+    <<: *backend
+    command: celery -A src.workers.celery_app:celery_app beat --loglevel=INFO --schedule=/tmp/celerybeat-schedule
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+  frontend:
+    # BACKEND_URL (http://api:8000) was baked in when CI built this image.
+    image: ghcr.io/alain-16/doc-checker-frontend:${IMAGE_TAG:?set IMAGE_TAG in .env}
+    # The ONLY published port. 9000 on your VPS (3000/8000 are taken there).
+    # Unit 5 changes this to 127.0.0.1:... once a reverse proxy does HTTPS.
+    ports:
+      - "${FRONTEND_PORT:-9000}:5000"
+    # Any HTTP answer below 500 (even a redirect to /login) means Next.js is up.
+    # Unit 4's deploy waits for this to be "healthy".
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://localhost:5000/').then(r => process.exit(r.status < 500 ? 0 : 1)).catch(() => process.exit(1))"
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+    depends_on:
+      api:
+        condition: service_healthy
+    logging: *logging
+    restart: unless-stopped
+
+configs:
+  s3_identities:
+    content: |
+      {
+        "identities": [
+          {
+            "name": "doc-checker",
+            "credentials": [
+              {
+                "accessKey": "${S3_ACCESS_KEY_ID}",
+                "secretKey": "${S3_SECRET_ACCESS_KEY}"
+              }
+            ],
+            "actions": ["Admin", "Read", "Write", "List", "Tagging"]
+          }
+        ]
+      }
+
+volumes:
+  postgres_data:
+  redis_data:
+  object_storage_data:

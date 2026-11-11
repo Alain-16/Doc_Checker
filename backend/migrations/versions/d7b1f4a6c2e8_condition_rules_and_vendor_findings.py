@@ -9,16 +9,16 @@ Revises: c3d5e7f90a12
 Create Date: 2026-11-05 12:00:00.000000
 
 """
-from typing import Sequence, Union
+from collections.abc import Sequence
 
-from alembic import op
 import sqlalchemy as sa
+from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = 'd7b1f4a6c2e8'
-down_revision: Union[str, Sequence[str], None] = 'c3d5e7f90a12'
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | Sequence[str] | None = 'c3d5e7f90a12'
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 OLD_KINDS = (
     "'document_age', 'missing_field', 'record_completeness', 'date_conflict', 'low_confidence', "

@@ -5,18 +5,16 @@ Revises: a2c8207c55c2
 Create Date: 2026-10-28 12:50:41.525829
 
 """
-from typing import Sequence, Union
+from collections.abc import Sequence
 
-from alembic import op
-import pgvector.sqlalchemy
 import sqlalchemy as sa
-
+from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = '63e4457eabe8'
-down_revision: Union[str, Sequence[str], None] = 'a2c8207c55c2'
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | Sequence[str] | None = 'a2c8207c55c2'
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:

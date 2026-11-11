@@ -7,7 +7,7 @@ from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from src.api.documents import DocumentOut, documents_query, document_out
+from src.api.documents import DocumentOut, document_out, documents_query
 from src.auth.dependencies import current_user
 from src.config.database import get_session
 from src.models import (

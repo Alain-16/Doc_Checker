@@ -1,17 +1,36 @@
 import time
 from typing import Any, TypedDict
 
-from langgraph.graph import END, START, StateGraph
 from langchain_core.runnables import RunnableConfig
+from langgraph.graph import END, START, StateGraph
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from src.industry.profile import current_profile
-from src.copilot.answers import NOT_FOUND, Claim, check_grounding, compose, draft_answer, out_of_scope_message
+from src.copilot.answers import (
+    NOT_FOUND,
+    Claim,
+    check_grounding,
+    compose,
+    draft_answer,
+    out_of_scope_message,
+)
 from src.copilot.content_search import find_passages
-from src.copilot.database_tools import FindingsTool, choose_tool, read_each_document, run_findings, run_tool
+from src.copilot.database_tools import (
+    FindingsTool,
+    choose_tool,
+    read_each_document,
+    run_findings,
+    run_tool,
+)
 from src.copilot.source import Source, number_sources, stored_sources
-from src.copilot.understanding import QuestionPlan, Scope, plan_question, resolve_scope, search_query
+from src.copilot.understanding import (
+    QuestionPlan,
+    Scope,
+    plan_question,
+    resolve_scope,
+    search_query,
+)
+from src.industry.profile import current_profile
 from src.llm.models import MODEL_BY_TASK, LlmTask
 from src.models import Conversation, DocumentType, Message, QueryLog, User
 from src.models.copilot import MessageRole, QuestionRoute

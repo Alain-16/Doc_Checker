@@ -3,11 +3,11 @@ from datetime import datetime, timedelta
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
-from src.review.notifications import notify
-from src.review.policies import current_policies
 from src.models import Alert
 from src.models.alert import AlertStatus, DeliveryKind
 from src.models.compliance import FindingSeverity
+from src.review.notifications import notify
+from src.review.policies import current_policies
 
 
 def follow_up_alerts(session: Session, now: datetime) -> dict[str, int]:

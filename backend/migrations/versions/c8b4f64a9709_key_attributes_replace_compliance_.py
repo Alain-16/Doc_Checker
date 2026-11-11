@@ -5,19 +5,18 @@ Revises: cb9bd13b6cad
 Create Date: 2026-10-27 00:58:17.925320
 
 """
-from typing import Sequence, Union
 import uuid
+from collections.abc import Sequence
 
-from alembic import op
-import pgvector.sqlalchemy
 import sqlalchemy as sa
+from alembic import op
 from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
 revision: str = 'c8b4f64a9709'
-down_revision: Union[str, Sequence[str], None] = 'cb9bd13b6cad'
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | Sequence[str] | None = 'cb9bd13b6cad'
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 # "attribute_mapping" belonged to the old open-ended catalog ("is 'Latex-free'
 # the same as 'NRL'?"). With a configured list there is nothing to map.

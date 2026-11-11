@@ -5,19 +5,18 @@ Revises: c8b4f64a9709
 Create Date: 2026-10-27 21:10:56.570647
 
 """
-from typing import Sequence, Union
 import uuid
+from collections.abc import Sequence
 
-from alembic import op
-import pgvector.sqlalchemy
 import sqlalchemy as sa
+from alembic import op
 from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
 revision: str = 'fc561f9bd015'
-down_revision: Union[str, Sequence[str], None] = 'c8b4f64a9709'
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | Sequence[str] | None = 'c8b4f64a9709'
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 INITIAL_REASON = "Initial rule set (Feature 7, agreed 2026-10-27)."
 # Effective dates are never governing: they say when a document is in force, and
