@@ -145,10 +145,13 @@ services:
   frontend:
     # BACKEND_URL (http://api:8000) was baked in when CI built this image.
     image: ghcr.io/alain-16/doc-checker-frontend:${IMAGE_TAG:?set IMAGE_TAG in .env}
-    # The ONLY published port. 9000 on your VPS (3000/8000 are taken there).
-    # Unit 5 changes this to 127.0.0.1:... once a reverse proxy does HTTPS.
+    # The ONLY published port. LEFT = VPS host port (5000: 3000/8000 are taken
+    # there). RIGHT = the port Next.js listens on inside the container
+    # (PORT=3000 in frontend/Dockerfile) - never change the right side.
+    # 127.0.0.1: Docker-published ports bypass ufw; reach it with an SSH
+    # tunnel until Unit 5 puts HTTPS in front.
     ports:
-      - "${FRONTEND_PORT:-9000}:5000"
+      - "127.0.0.1:${FRONTEND_PORT:-5000}:3000"
     # Any HTTP answer below 500 (even a redirect to /login) means Next.js is up.
     # Unit 4's deploy waits for this to be "healthy".
     healthcheck:
@@ -156,7 +159,7 @@ services:
         - CMD
         - node
         - -e
-        - "fetch('http://localhost:5000/').then(r => process.exit(r.status < 500 ? 0 : 1)).catch(() => process.exit(1))"
+        - "fetch('http://localhost:3000/').then(r => process.exit(r.status < 500 ? 0 : 1)).catch(() => process.exit(1))"
       interval: 10s
       timeout: 5s
       retries: 10
