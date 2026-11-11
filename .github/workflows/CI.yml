@@ -1,0 +1,158 @@
+name: CI
+
+on:
+  push:
+    branches: [development]
+  pull_request:
+    branches: [main]
+  workflow_call:
+
+permissions: 
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Dummy settings: just enough for src.config.settings to load (there is no
+# .env on a CI machine). None of these are real secrets. DATABASE_URL matches
+# the throwaway Postgres of the `migrations` job.
+
+env:
+  APP_ENV: local
+  DATABASE_URL: postgresql+psycopg://ci:ci@localhost:5432/ci
+  REDIS_URL: redis://localhost:6379/0
+  S3_REGION: us-east-1
+  S3_ORIGINALS_BUCKET: ci-originals
+  OPENAI_API_KEY: sk-ci-not-a-real-key
+  MFA_ENCRYPTION_KEY: ci-no-a-real-key
+
+jobs:
+  backend:
+    name: Backend (ruff, imports, alembic heads)
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "o.13.7"
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+      - name: install dependencies
+        run: uv sync --frozen
+      - name: Ruff
+        run: uv run ruff check --output-format=github .
+      - name: API and Celery apps imports
+        run: uv run python -c "import src.main, src.workers.celery_app"
+      - name: Exactly one Alembic head
+        run: |
+          heads=$(uv run alembic heads | grep -c "(head)")
+          echo "Alembic heads: $heads"
+          test "$heads" -eq 1
+  
+  migrations:
+    name: Migrations on an empty database
+    runs-on: ubuntu-24.04
+    needs: backend
+    defaults:
+      run:
+        working-directory: backend
+    services:
+      postgres:
+        image: pgvector/pgvector:0.8.6-pg17
+        env:
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ci -d ci"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.13.7"
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+
+      - name: Install dependencies
+        run: uv sync --frozen
+
+      - name: alembic upgrade head
+        run: uv run alembic upgrade head
+
+  frontend:
+    name: Frontend (eslint, tsc, next build)
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v5
+
+      # Reads "packageManager": "pnpm@11.9.0" from package.json, so CI uses
+      # the same pnpm as you and the Dockerfile.
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: frontend/package.json
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22             # same as the Dockerfile
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: ESLint
+        run: pnpm lint
+
+      - name: TypeScript
+        run: pnpm exec tsc --noEmit
+
+      - name: next build
+        run: pnpm build
+        env:
+          NEXT_TELEMETRY_DISABLED: "1"
+
+  docker:
+    name: Docker images build
+    runs-on: ubuntu-24.04
+    # No point building images from code that fails lint.
+    needs: [backend, frontend]
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: docker/setup-buildx-action@v3
+
+      # push: false — only proves the Dockerfile builds. Layers go to GitHub's
+      # build cache; deploy.yml reads the same scopes, so its build is quick.
+      - name: Backend image
+        uses: docker/build-push-action@v6
+        with:
+          context: backend
+          push: false
+          cache-from: type=gha,scope=backend
+          cache-to: type=gha,scope=backend,mode=max
+
+      - name: Frontend image
+        uses: docker/build-push-action@v6
+        with:
+          context: frontend
+          build-args: |
+            BACKEND_URL=http://api:9000
+          push: false
+          cache-from: type=gha,scope=frontend
+          cache-to: type=gha,scope=frontend,mode=max
+        
+        
+  
