@@ -66,6 +66,9 @@ services:
         target: /etc/seaweedfs/s3.json
     volumes:
       - object_storage_data:/data
+    # 127.0.0.1, not localhost: where Docker has IPv6 on (the VPS), "localhost"
+    # resolves to ::1 first, but these servers listen on IPv4 only, and
+    # busybox wget doesn't fall back to 127.0.0.1. The check then always fails.
     healthcheck:
       test:
         [
@@ -73,11 +76,12 @@ services:
           "wget",
           "-q",
           "--spider",
-          "http://localhost:9333/cluster/healthz",
+          "http://127.0.0.1:9333/cluster/healthz",
         ]
       interval: 10s
       timeout: 5s
       retries: 10
+      start_period: 30s
     restart: unless-stopped
 
   # One-shot: bring the schema up to date and make sure the bucket exists.
@@ -106,7 +110,7 @@ services:
           "CMD",
           "python",
           "-c",
-          "import urllib.request; urllib.request.urlopen('http://localhost:8000/openapi.json')",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/openapi.json')",
         ]
       interval: 10s
       timeout: 5s
